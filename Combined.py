@@ -20,34 +20,15 @@ st.set_page_config(
     page_icon="📝"
 )
 
-# Helper function to parse secrets from GitHub secret
-def parse_secrets(secret_content):
-    """Parse secrets from the single secret string"""
-    secrets = {}
-    for line in secret_content.split('\n'):
-        if '=' in line:
-            key, value = line.split('=', 1)
-            secrets[key.strip()] = value.strip()
-    return secrets
-
-# Load secrets from GitHub secret or Streamlit secrets
+# Load secrets directly from Streamlit secrets
 try:
-    # Try to get the single secret from GitHub
-    secret_content = os.getenv('SECRET_TRY', '')
-    if not secret_content:
-        # Fall back to Streamlit secrets
-        secret_content = st.secrets.get("SECRET_TRY", "")
-    
-    secrets = parse_secrets(secret_content)
-    
-    # Extract individual keys
-    SUPABASE_URL = secrets.get("SUPABASE_URL", "")
-    SUPABASE_KEY = secrets.get("SUPABASE_KEY", "")
-    GOOGLE_API_KEY = secrets.get("GOOGLE_API_KEY", "")
-    ASSEMBLYAI_API_KEY = secrets.get("ASSEMBLYAI_API_KEY", "")
-    OCR_API_KEY = secrets.get("OCR_API_KEY", "")
-    GROQ_API_KEY = secrets.get("GROQ_API_KEY", "")
-    
+    SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
+    SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
+    GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
+    ASSEMBLYAI_API_KEY = st.secrets.get("ASSEMBLYAI_API_KEY", "")
+    OCR_API_KEY = st.secrets.get("OCR_API_KEY", "")
+    GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+
 except Exception as e:
     st.error(f"Error loading secrets: {str(e)}")
     SUPABASE_URL = ""
@@ -60,12 +41,8 @@ except Exception as e:
 # Initialize Supabase client
 @st.cache_resource
 def init_supabase():
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise ValueError("Supabase credentials missing.")
-
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = init_supabase()
@@ -79,46 +56,39 @@ class ObservationExtractor:
         self.groq_api_key = GROQ_API_KEY
         self.gemini_api_key = GOOGLE_API_KEY
 
-    def image_to_base64(self, image_file):
-        """Convert image file to base64 string"""
-        return base64.b64encode(image_file.read()).decode('utf-8')
+    # ... [Keep all helper methods the same until extract_text_with_ocr]
 
     def extract_text_with_ocr(self, image_file):
         """Extract text from image using OCR.space API"""
         try:
-            # Get file extension
             file_type = image_file.name.split('.')[-1].lower()
             if file_type == 'jpeg':
                 file_type = 'jpg'
 
-            # Convert image to base64
             base64_image = self.image_to_base64(image_file)
             base64_image_with_prefix = f"data:image/{file_type};base64,{base64_image}"
 
-            # Prepare request payload
             payload = {
-                'apikey': self.ocr_api_key,
                 'language': 'eng',
                 'isOverlayRequired': False,
-                'iscreatesearchablepdf': False,
-                'issearchablepdfhidetextlayer': False,
-                'OCREngine': 2,  # Better for handwriting
+                'base64Image': base64_image_with_prefix,
+                'OCREngine': 2,
                 'detectOrientation': True,
-                'scale': True,
-                'base64Image': base64_image_with_prefix
+                'scale': True
             }
 
-            # Send request to OCR API
+            # Corrected headers with proper API key usage
+            headers = {'apikey': self.ocr_api_key}
+
             response = requests.post(
                 'https://api.ocr.space/parse/image',
                 data=payload,
-                headers={'apikey': self.ocr_api_key}
+                headers=headers
             )
 
             response.raise_for_status()
             data = response.json()
 
-            # Process response
             if not data.get('ParsedResults') or len(data['ParsedResults']) == 0:
                 error_msg = data.get('ErrorMessage', 'No parsed results returned')
                 raise Exception(f"OCR Error: {error_msg}")
@@ -129,8 +99,8 @@ class ObservationExtractor:
 
             extracted_text = parsed_result['ParsedText']
 
-            if not extracted_text or not extracted_text.strip():
-                raise Exception("No text was detected in the image")
+            if not extracted_text.strip():
+                raise Exception("No text detected in the image")
 
             return extracted_text
 
