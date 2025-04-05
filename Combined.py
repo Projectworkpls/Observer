@@ -40,7 +40,7 @@ try:
     
     secrets = parse_secrets(secret_content)
     
-    # Extract individual keys
+    # Extract individual keys with validation
     SUPABASE_URL = secrets.get("SUPABASE_URL", "")
     SUPABASE_KEY = secrets.get("SUPABASE_KEY", "")
     GOOGLE_API_KEY = secrets.get("GOOGLE_API_KEY", "")
@@ -48,25 +48,32 @@ try:
     OCR_API_KEY = secrets.get("OCR_API_KEY", "")
     GROQ_API_KEY = secrets.get("GROQ_API_KEY", "")
     
+    # Validate required secrets
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        st.error("Supabase credentials missing in secrets")
+        st.stop()
+    if not OCR_API_KEY:
+        st.error("OCR API key missing in secrets")
+        st.stop()
+    if not ASSEMBLYAI_API_KEY:
+        st.error("AssemblyAI API key missing in secrets")
+        st.stop()
+    
 except Exception as e:
     st.error(f"Error loading secrets: {str(e)}")
-    SUPABASE_URL = ""
-    SUPABASE_KEY = ""
-    GOOGLE_API_KEY = ""
-    ASSEMBLYAI_API_KEY = ""
-    OCR_API_KEY = ""
-    GROQ_API_KEY = ""
+    st.stop()
 
-# Initialize Supabase client
+# Initialize Supabase client with proper error handling
 @st.cache_resource
 def init_supabase():
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise ValueError("Supabase credentials missing.")
-
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        # Test connection
+        client.from_("observations").select("*").limit(1).execute()
+        return client
+    except Exception as e:
+        st.error(f"Failed to initialize Supabase: {str(e)}")
+        st.stop()
 
 supabase = init_supabase()
 
@@ -95,24 +102,24 @@ class ObservationExtractor:
             base64_image = self.image_to_base64(image_file)
             base64_image_with_prefix = f"data:image/{file_type};base64,{base64_image}"
 
-            # Prepare request payload
-            payload = {
+            # Prepare request with proper headers
+            headers = {
                 'apikey': self.ocr_api_key,
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+            
+            payload = {
                 'language': 'eng',
                 'isOverlayRequired': False,
-                'iscreatesearchablepdf': False,
-                'issearchablepdfhidetextlayer': False,
-                'OCREngine': 2,  # Better for handwriting
-                'detectOrientation': True,
-                'scale': True,
-                'base64Image': base64_image_with_prefix
+                'OCREngine': 2,
+                'base64Image': base64_image_with_prefix.split(',')[1]  # Remove data URI prefix
             }
 
             # Send request to OCR API
             response = requests.post(
                 'https://api.ocr.space/parse/image',
-                data=payload,
-                headers={'apikey': self.ocr_api_key}
+                headers=headers,
+                data=payload
             )
 
             response.raise_for_status()
@@ -137,6 +144,10 @@ class ObservationExtractor:
         except Exception as e:
             st.error(f"OCR Error: {str(e)}")
             raise
+
+    # Rest of the class remains unchanged... (process_with_groq, transcribe_with_assemblyai, etc.)
+
+# Rest of the main application code remains unchanged...
 
     def process_with_groq(self, extracted_text):
         """Process extracted text with Groq AI"""
