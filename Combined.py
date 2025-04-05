@@ -25,8 +25,7 @@ def parse_secrets(secret_content):
     """Parse secrets from the single secret string"""
     secrets = {}
     for line in secret_content.split('\n'):
-        line = line.strip()
-        if line and '=' in line:
+        if '=' in line:
             key, value = line.split('=', 1)
             secrets[key.strip()] = value.strip()
     return secrets
@@ -41,7 +40,7 @@ try:
     
     secrets = parse_secrets(secret_content)
     
-    # Extract individual keys with validation
+    # Extract individual keys
     SUPABASE_URL = secrets.get("SUPABASE_URL", "")
     SUPABASE_KEY = secrets.get("SUPABASE_KEY", "")
     GOOGLE_API_KEY = secrets.get("GOOGLE_API_KEY", "")
@@ -51,23 +50,23 @@ try:
     
 except Exception as e:
     st.error(f"Error loading secrets: {str(e)}")
-    st.stop()
+    SUPABASE_URL = ""
+    SUPABASE_KEY = ""
+    GOOGLE_API_KEY = ""
+    ASSEMBLYAI_API_KEY = ""
+    OCR_API_KEY = ""
+    GROQ_API_KEY = ""
 
-# Initialize Supabase client with proper error handling
+# Initialize Supabase client
 @st.cache_resource
 def init_supabase():
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
     if not SUPABASE_URL or not SUPABASE_KEY:
-        st.error("Supabase credentials missing. Please check your secrets.")
-        st.stop()
-    
-    try:
-        client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        # Test connection
-        client.from_("observations").select("*").limit(1).execute()
-        return client
-    except Exception as e:
-        st.error(f"Failed to initialize Supabase: {str(e)}")
-        st.stop()
+        raise ValueError("Supabase credentials missing.")
+
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = init_supabase()
 
@@ -87,9 +86,6 @@ class ObservationExtractor:
     def extract_text_with_ocr(self, image_file):
         """Extract text from image using OCR.space API"""
         try:
-            if not self.ocr_api_key:
-                raise Exception("OCR API key not configured")
-
             # Get file extension
             file_type = image_file.name.split('.')[-1].lower()
             if file_type == 'jpeg':
@@ -99,24 +95,24 @@ class ObservationExtractor:
             base64_image = self.image_to_base64(image_file)
             base64_image_with_prefix = f"data:image/{file_type};base64,{base64_image}"
 
-            # Prepare request payload with proper formatting
-            headers = {
-                'apikey': self.ocr_api_key,
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-            
+            # Prepare request payload
             payload = {
-                'base64Image': base64_image_with_prefix.split(',')[1],  # Remove data URI prefix
+                'apikey': self.ocr_api_key,
                 'language': 'eng',
-                'OCREngine': 2,
-                'isOverlayRequired': False
+                'isOverlayRequired': False,
+                'iscreatesearchablepdf': False,
+                'issearchablepdfhidetextlayer': False,
+                'OCREngine': 2,  # Better for handwriting
+                'detectOrientation': True,
+                'scale': True,
+                'base64Image': base64_image_with_prefix
             }
 
             # Send request to OCR API
             response = requests.post(
                 'https://api.ocr.space/parse/image',
-                headers=headers,
-                data=payload
+                data=payload,
+                headers={'apikey': self.ocr_api_key}
             )
 
             response.raise_for_status()
@@ -142,14 +138,78 @@ class ObservationExtractor:
             st.error(f"OCR Error: {str(e)}")
             raise
 
-    # ... [Keep all other methods identical from your original code] ...
+    def process_with_groq(self, extracted_text):
+        """Process extracted text with Groq AI"""
+        try:
+            # Original detailed prompt
+            system_prompt = """You are an AI assistant for a learning observation system. Extract and structure information from the provided observation sheet text.
+
+The observation sheets typically have the following structure:
+- Title (usually "The Observer")
+- Student information (Name, Roll Number/ID)
+- Date and Time information
+- Core Observation Section with time slots
+- Teaching content for each time slot
+- Learning details (what was learned, tools used, etc.)
+
+Format your response as JSON with the following structure:
+{
+  "studentName": "Student's name if available, otherwise use the title of the observation",
+  "studentId": "Student ID or Roll Number",
+  "className": "Class name or subject being taught",
+  "date": "Date of observation",
+  "observations": "Detailed description of what was learned",
+  "strengths": ["List of strengths observed in the student"],
+  "areasOfDevelopment": ["List of areas where the student needs improvement"],
+  "recommendations": ["List of recommended actions for improvement"]
+}
+
+For observations, provide full detailed descriptions like:
+"The student learned how to make maggi from their mom through in-person mode, including all steps from boiling water to adding spices"
+
+Be creative in extracting information based on context."""
+
+            # Send request to Groq API
+            response = requests.post(
+                'https://api.groq.com/openai/v1/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {self.groq_api_key}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": system_prompt
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Extract and structure the following text from an observation sheet: {extracted_text}"
+                        }
+                    ],
+                    "temperature": 0.2,
+                    "response_format": {"type": "json_object"}
+                }
+            )
+
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract the JSON content
+            ai_response = data['choices'][0]['message']['content']
+            return json.loads(ai_response)
+
+        except Exception as e:
+            st.error(f"Groq API Error: {str(e)}")
+            raise
 
     def transcribe_with_assemblyai(self, audio_file):
         """Transcribe audio using AssemblyAI API"""
         if not ASSEMBLYAI_API_KEY:
             return "Error: AssemblyAI API key is not configured. Please add it to your secrets."
-
-        # Set up the API headers with validated key
+            
+        # Set up the API headers
         headers = {
             "authorization": ASSEMBLYAI_API_KEY,
             "content-type": "application/json"
