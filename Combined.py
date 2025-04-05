@@ -60,6 +60,12 @@ except Exception as e:
 # Initialize Supabase client
 @st.cache_resource
 def init_supabase():
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValueError("Supabase credentials missing.")
+
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = init_supabase()
