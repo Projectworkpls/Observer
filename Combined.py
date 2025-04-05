@@ -25,7 +25,8 @@ def parse_secrets(secret_content):
     """Parse secrets from the single secret string"""
     secrets = {}
     for line in secret_content.split('\n'):
-        if '=' in line:
+        line = line.strip()
+        if line and '=' in line:
             key, value = line.split('=', 1)
             secrets[key.strip()] = value.strip()
     return secrets
@@ -40,7 +41,7 @@ try:
     
     secrets = parse_secrets(secret_content)
     
-    # Extract individual keys with validation
+    # Extract individual keys
     SUPABASE_URL = secrets.get("SUPABASE_URL", "")
     SUPABASE_KEY = secrets.get("SUPABASE_KEY", "")
     GOOGLE_API_KEY = secrets.get("GOOGLE_API_KEY", "")
@@ -48,28 +49,24 @@ try:
     OCR_API_KEY = secrets.get("OCR_API_KEY", "")
     GROQ_API_KEY = secrets.get("GROQ_API_KEY", "")
     
-    # Validate required secrets
+    # Validate Supabase credentials
     if not SUPABASE_URL or not SUPABASE_KEY:
-        st.error("Supabase credentials missing in secrets")
+        st.error("Supabase credentials missing in secrets configuration")
         st.stop()
-    if not OCR_API_KEY:
-        st.error("OCR API key missing in secrets")
-        st.stop()
-    if not ASSEMBLYAI_API_KEY:
-        st.error("AssemblyAI API key missing in secrets")
-        st.stop()
-    
+
 except Exception as e:
     st.error(f"Error loading secrets: {str(e)}")
     st.stop()
 
-# Initialize Supabase client with proper error handling
+# Initialize Supabase client (CORRECTED VERSION)
 @st.cache_resource
 def init_supabase():
     try:
+        # Use the variables we extracted from secrets
         client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        
         # Test connection
-        client.from_("observations").select("*").limit(1).execute()
+        test = client.from_("observations").select("*").limit(1).execute()
         return client
     except Exception as e:
         st.error(f"Failed to initialize Supabase: {str(e)}")
