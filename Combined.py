@@ -56,7 +56,10 @@ class ObservationExtractor:
         self.groq_api_key = GROQ_API_KEY
         self.gemini_api_key = GOOGLE_API_KEY
 
-    # ... [Keep all helper methods the same until extract_text_with_ocr]
+    # Add the missing method here
+    def image_to_base64(self, image_file):
+        """Convert image file to base64 string"""
+        return base64.b64encode(image_file.read()).decode('utf-8')
 
     def extract_text_with_ocr(self, image_file):
         """Extract text from image using OCR.space API"""
