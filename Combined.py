@@ -12,6 +12,9 @@ import google.generativeai as genai
 import docx
 from docx.shared import Pt
 import io
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 # Set page config FIRST (must be the first Streamlit command)
 st.set_page_config(
@@ -28,6 +31,7 @@ try:
     ASSEMBLYAI_API_KEY = st.secrets.get("ASSEMBLYAI_API_KEY", "")
     OCR_API_KEY = st.secrets.get("OCR_API_KEY", "")
     GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+    EMAIL_PASSWORD = st.secrets.get("EMAIL_PASSWORD", "")
 
 except Exception as e:
     st.error(f"Error loading secrets: {str(e)}")
@@ -37,6 +41,7 @@ except Exception as e:
     ASSEMBLYAI_API_KEY = ""
     OCR_API_KEY = ""
     GROQ_API_KEY = ""
+    EMAIL_PASSWORD = ""
 
 # Initialize Supabase client
 @st.cache_resource
@@ -55,8 +60,8 @@ class ObservationExtractor:
         self.ocr_api_key = OCR_API_KEY
         self.groq_api_key = GROQ_API_KEY
         self.gemini_api_key = GOOGLE_API_KEY
+        self.email_password = EMAIL_PASSWORD
 
-    # Add the missing method here
     def image_to_base64(self, image_file):
         """Convert image file to base64 string"""
         return base64.b64encode(image_file.read()).decode('utf-8')
@@ -80,7 +85,6 @@ class ObservationExtractor:
                 'scale': True
             }
 
-            # Corrected headers with proper API key usage
             headers = {'apikey': self.ocr_api_key}
 
             response = requests.post(
@@ -114,7 +118,6 @@ class ObservationExtractor:
     def process_with_groq(self, extracted_text):
         """Process extracted text with Groq AI"""
         try:
-            # Original detailed prompt
             system_prompt = """You are an AI assistant for a learning observation system. Extract and structure information from the provided observation sheet text.
 
 The observation sheets typically have the following structure:
@@ -142,7 +145,6 @@ For observations, provide full detailed descriptions like:
 
 Be creative in extracting information based on context."""
 
-            # Send request to Groq API
             response = requests.post(
                 'https://api.groq.com/openai/v1/chat/completions',
                 headers={
@@ -169,7 +171,6 @@ Be creative in extracting information based on context."""
             response.raise_for_status()
             data = response.json()
 
-            # Extract the JSON content
             ai_response = data['choices'][0]['message']['content']
             return json.loads(ai_response)
 
@@ -182,13 +183,11 @@ Be creative in extracting information based on context."""
         if not ASSEMBLYAI_API_KEY:
             return "Error: AssemblyAI API key is not configured. Please add it to your secrets."
             
-        # Set up the API headers
         headers = {
             "authorization": ASSEMBLYAI_API_KEY,
             "content-type": "application/json"
         }
         
-        # Upload the audio file
         try:
             st.write("Uploading audio file...")
             upload_response = requests.post(
@@ -202,7 +201,6 @@ Be creative in extracting information based on context."""
             
             upload_url = upload_response.json()["upload_url"]
             
-            # Request transcription
             st.write("Processing transcription...")
             transcript_request = {
                 "audio_url": upload_url,
@@ -220,7 +218,6 @@ Be creative in extracting information based on context."""
             
             transcript_id = transcript_response.json()["id"]
             
-            # Poll for completion
             status = "processing"
             progress_bar = st.progress(0)
             while status != "completed" and status != "error":
@@ -241,7 +238,6 @@ Be creative in extracting information based on context."""
                 elif status == "error":
                     return f"Transcription error: {polling_data.get('error', 'Unknown error')}"
                 
-                # Update progress
                 progress = polling_data.get("percent_done", 0)
                 if progress:
                     progress_bar.progress(progress / 100.0)
@@ -298,18 +294,14 @@ Be creative in extracting information based on context."""
         """
         
         try:
-            # Configure the model - using Gemini Pro for most comprehensive responses
             model = genai.GenerativeModel('gemini-1.5-pro-002')
             
-            # Generate content with Gemini
             response = model.generate_content([
                 {"role": "user", "parts": [{"text": prompt}]}
             ])
             
-            # Extract the content from the response
             report_content = response.text
             
-            # Add user information to the report
             complete_report = f"""Date: {user_info['session_date']}
     Student Name: {user_info['student_name']}
     Observer Name: {user_info['observer_name']}
@@ -327,13 +319,10 @@ Be creative in extracting information based on context."""
         """Create a Word document from the report content with proper formatting"""
         doc = docx.Document()
         
-        # Add title 
         title = doc.add_heading('The Observer Report', 0)
         
-        # Clean up markdown formatting
         report_content = report_content.replace('**', '')
         
-        # Add report content, parsing the sections
         lines = report_content.split('\n')
         section_pattern = re.compile(r'^\d+\.\s+(.+)')
         subheading_pattern = re.compile(r'^\*\s*(.+):\*\s*(.+)')
@@ -344,16 +333,13 @@ Be creative in extracting information based on context."""
             if not line:
                 continue
             
-            # Header information (Date, Name, etc.)
             if line.startswith(('Date:', 'Student Name:', 'Observer Name:', 'Session Duration:', 'Name of Observer:')):
                 p = doc.add_paragraph()
                 p.add_run(line).bold = True
             
-            # Section heading (e.g., "1. Daily Activities Overview")
             elif section_match := section_pattern.match(line):
                 doc.add_heading(line, level=1)
             
-            # Subheading with bold prefix (e.g., "* Morning activities: Woke up early")
             elif subheading_match := subheading_pattern.match(line):
                 p = doc.add_paragraph()
                 prefix = subheading_match.group(1)
@@ -361,28 +347,46 @@ Be creative in extracting information based on context."""
                 p.add_run(f"{prefix}: ").bold = True
                 p.add_run(content)
             
-            # List item
             elif list_match := list_item_pattern.match(line):
                 content = list_match.group(1)
                 p = doc.add_paragraph(content, style='List Bullet')
             
-            # Regular paragraph
             else:
                 doc.add_paragraph(line)
         
-        # Save to a BytesIO object
         docx_bytes = io.BytesIO()
         doc.save(docx_bytes)
         docx_bytes.seek(0)
         
         return docx_bytes
 
+    def send_email(self, recipient_email, subject, message):
+        """Send email with the observation report"""
+        sender_email = "parth.workforai@gmail.com"
+        
+        msg = MIMEMultipart()
+        msg["From"] = sender_email
+        msg["To"] = recipient_email
+        msg["Subject"] = subject
+        msg.attach(MIMEText(message, "html"))
+
+        try:
+            server = smtplib.SMTP("smtp.gmail.com", 587)
+            server.starttls()
+            server.login(sender_email, self.email_password)
+            server.send_message(msg)
+            return True, f"Email sent to {recipient_email}"
+        except smtplib.SMTPAuthenticationError:
+            return False, "Error: Authentication failed. Check your email and password."
+        except smtplib.SMTPException as e:
+            return False, f"Error: Failed to send email. {e}"
+        finally:
+            server.quit()
+
 # Main App
 def main():
-    # Initialize extractor
     extractor = ObservationExtractor()
 
-    # Session state
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
     if 'username' not in st.session_state:
@@ -402,9 +406,8 @@ def main():
     if 'show_edit_transcript' not in st.session_state:
         st.session_state.show_edit_transcript = False
     if 'processing_mode' not in st.session_state:
-        st.session_state.processing_mode = None  # 'ocr' or 'audio'
+        st.session_state.processing_mode = None
 
-    # Login Page (accepts any credentials)
     if not st.session_state.authenticated:
         st.title("Learning Observer Login")
 
@@ -420,7 +423,6 @@ def main():
 
         return
 
-    # Main Application
     st.title(f"Welcome, {st.session_state.username}")
 
     if st.button("Logout"):
@@ -428,11 +430,9 @@ def main():
         st.session_state.username = ""
         st.rerun()
 
-    # Sidebar for user information
     with st.sidebar:
         st.subheader("Session Information")
         
-        # Get user input
         st.session_state.user_info['student_name'] = st.text_input("Student Name:", value=st.session_state.user_info['student_name'])
         st.session_state.user_info['observer_name'] = st.text_input("Observer Name:", value=st.session_state.user_info['observer_name'])
         st.session_state.user_info['session_date'] = st.date_input("Session Date:").strftime('%d/%m/%Y')
@@ -443,7 +443,6 @@ def main():
         with col2:
             st.session_state.user_info['session_end'] = st.time_input("End Time:").strftime('%H:%M')
 
-    # Choose processing mode
     st.subheader("Select Processing Mode")
     col1, col2 = st.columns(2)
     with col1:
@@ -460,7 +459,6 @@ def main():
     if st.session_state.processing_mode == "ocr":
         st.info("OCR Mode: Upload an image of an observation sheet")
         
-        # File uploader for images
         uploaded_file = st.file_uploader("Upload Observation Sheet", type=["jpg", "jpeg", "png"])
         
         if uploaded_file is not None:
@@ -469,19 +467,14 @@ def main():
             if st.button("Process Observation"):
                 with st.spinner("Processing..."):
                     try:
-                        # Step 1: OCR
                         extracted_text = extractor.extract_text_with_ocr(uploaded_file)
-                        
-                        # Step 2: Groq AI processing
                         structured_data = extractor.process_with_groq(extracted_text)
                         
-                        # Generate report from structured data
                         observations_text = structured_data.get("observations", "")
                         if observations_text:
                             report = extractor.generate_report_from_text(observations_text, st.session_state.user_info)
                             st.session_state.report_generated = report
                             
-                            # Save to Supabase
                             supabase.table('observations').insert({
                                 "username": st.session_state.username,
                                 "student_name": structured_data.get("studentName", ""),
@@ -494,7 +487,7 @@ def main():
                                 "recommendations": json.dumps(structured_data.get("recommendations", [])),
                                 "timestamp": datetime.now().isoformat(),
                                 "filename": uploaded_file.name,
-                                "full_data": json.dumps(structured_data)  # Store complete data
+                                "full_data": json.dumps(structured_data)
                             }).execute()
                             
                             st.success("Data processed and saved successfully!")
@@ -507,36 +500,29 @@ def main():
     elif st.session_state.processing_mode == "audio":
         st.info("Audio Mode: Upload an audio recording of an observation session")
         
-        # File uploader for audio
         uploaded_file = st.file_uploader("Choose an audio file", 
                                        type=["wav", "mp3", "m4a", "mpeg", "mpg", "ogg", "flac", "aac", "wma", "aiff"])
         
         if uploaded_file is not None:
-            # Display audio player
             st.audio(uploaded_file)
             
-            # Check if user information is filled
             if (st.session_state.user_info['student_name'] and 
                 st.session_state.user_info['observer_name'] and 
                 st.session_state.user_info['session_start'] and 
                 st.session_state.user_info['session_end']):
                 
-                # One-click process button
                 if st.button("Process & Generate Report"):
                     if not ASSEMBLYAI_API_KEY:
                         st.error("AssemblyAI API key is missing. Please configure it in your secrets.")
                     else:
-                        # First, transcribe the audio
                         with st.spinner("Step 1/2: Transcribing audio..."):
                             transcript = extractor.transcribe_with_assemblyai(uploaded_file)
                             st.session_state.audio_transcription = transcript
                         
-                        # Then, generate the report
                         with st.spinner("Step 2/2: Generating report with Gemini AI..."):
                             report = extractor.generate_report_from_text(transcript, st.session_state.user_info)
                             st.session_state.report_generated = report
                             
-                            # Save to Supabase
                             supabase.table('observations').insert({
                                 "username": st.session_state.username,
                                 "student_name": st.session_state.user_info['student_name'],
@@ -557,7 +543,6 @@ def main():
             else:
                 st.warning("Please fill in all the session information in the sidebar.")
 
-    # Option to edit transcript (only shown if transcript exists)
     if st.session_state.audio_transcription:
         if st.button("Edit Transcription" if not st.session_state.show_edit_transcript else "Hide Editor"):
             st.session_state.show_edit_transcript = not st.session_state.show_edit_transcript
@@ -568,11 +553,9 @@ def main():
                                             value=st.session_state.audio_transcription, 
                                             height=200)
             
-            # Update the transcription if edited
             if edited_transcript != st.session_state.audio_transcription:
                 st.session_state.audio_transcription = edited_transcript
             
-            # Regenerate report with edited transcript
             if st.button("Regenerate Report with Edited Transcript"):
                 with st.spinner("Generating report with Gemini AI..."):
                     report = extractor.generate_report_from_text(
@@ -581,17 +564,13 @@ def main():
                     )
                     st.session_state.report_generated = report
 
-    # Show report if generated
     if st.session_state.report_generated:
         st.subheader("Generated Report")
         
-        # Display the report in the app
         st.markdown(st.session_state.report_generated)
         
-        # Create Word document for download
         docx_file = extractor.create_word_document(st.session_state.report_generated)
         
-        # Download button
         student_name = st.session_state.user_info['student_name'].replace(" ", "_")
         date = st.session_state.user_info['session_date'].replace("/", "-")
         filename = f"Observer_Report_{student_name}_{date}.docx"
@@ -603,7 +582,36 @@ def main():
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 
-    # Sample data for testing
+        # Email functionality
+        st.subheader("Email Report")
+        with st.form("email_form"):
+            recipient_email = st.text_input("Recipient Email", value="parent@example.com")
+            email_subject = st.text_input("Subject", value=f"Observer Report for {st.session_state.user_info['student_name']}")
+            
+            email_content = f"""
+            <html>
+                <body>
+                    <h2>Observer Report</h2>
+                    <p><strong>Student:</strong> {st.session_state.user_info['student_name']}</p>
+                    <p><strong>Date:</strong> {st.session_state.user_info['session_date']}</p>
+                    <p><strong>Observer:</strong> {st.session_state.user_info['observer_name']}</p>
+                    <hr>
+                    <pre>{st.session_state.report_generated}</pre>
+                </body>
+            </html>
+            """
+            
+            submitted = st.form_submit_button("Send Email")
+            if submitted:
+                if not recipient_email:
+                    st.error("Please enter a recipient email address")
+                else:
+                    success, message = extractor.send_email(recipient_email, email_subject, email_content)
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+
     with st.expander("Use sample data for testing"):
         if st.button("Load sample transcript"):
             sample_transcript = """
@@ -622,7 +630,6 @@ def main():
             st.session_state.audio_transcription = sample_transcript
             st.experimental_rerun()
 
-    # Footer
     st.markdown("---")
     st.markdown("The Observer Report Generator")
 
