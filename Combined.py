@@ -361,27 +361,27 @@ Be creative in extracting information based on context."""
         return docx_bytes
 
     def send_email(self, recipient_email, subject, message):
-        """Send email with the observation report"""
-        sender_email = "parth.workforai@gmail.com"
-        
-        msg = MIMEMultipart()
-        msg["From"] = sender_email
-        msg["To"] = recipient_email
-        msg["Subject"] = subject
-        msg.attach(MIMEText(message, "html"))
+    """Send email with the observation report"""
+    sender_email = "parth.workforai@gmail.com"
+    
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = recipient_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(message, "html"))
 
-        try:
-            server = smtplib.SMTP("smtp.gmail.com", 587)
+    try:
+        # Add timeout and explicit quit
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
             server.starttls()
             server.login(sender_email, self.email_password)
             server.send_message(msg)
             return True, f"Email sent to {recipient_email}"
-        except smtplib.SMTPAuthenticationError:
-            return False, "Error: Authentication failed. Check your email and password."
-        except smtplib.SMTPException as e:
-            return False, f"Error: Failed to send email. {e}"
-        finally:
-            server.quit()
+    except Exception as e:
+        return False, f"Error: {str(e)}"
+    finally:
+        if 'server' in locals():
+            server.quit()  
 
 # Main App
 def main():
