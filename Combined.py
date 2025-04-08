@@ -371,17 +371,20 @@ Be creative in extracting information based on context."""
     msg.attach(MIMEText(message, "html"))
 
     try:
-        # Add timeout and explicit quit
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
+            server.ehlo()  # Important for some servers
             server.starttls()
+            server.ehlo()  # Re-identify after STARTTLS
             server.login(sender_email, self.email_password)
             server.send_message(msg)
             return True, f"Email sent to {recipient_email}"
+            
+    except smtplib.SMTPAuthenticationError:
+        return False, "Authentication failed - check your email/password"
+    except smtplib.SMTPException as e:
+        return False, f"SMTP error: {str(e)}"
     except Exception as e:
-        return False, f"Error: {str(e)}"
-    finally:
-        if 'server' in locals():
-            server.quit()  
+        return False, f"Unexpected error: {str(e)}"  
 
 # Main App
 def main():
