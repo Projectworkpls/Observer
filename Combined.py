@@ -384,16 +384,112 @@ Be creative in extracting information based on context."""
         except smtplib.SMTPException as e:
             return False, f"SMTP error: {str(e)}"
         except Exception as e:
-            return False, f"Unexpected error: {str(e)}"  
+            return False, f"Unexpected error: {str(e)}" 
+
+def admin_dashboard():
+    st.title("Admin Dashboard")
+    
+    tabs = st.tabs(["Mappings", "Activity Logs", "System"])
+    
+    with tabs[0]:
+        st.subheader("Observer-Child Mappings")
+        try:
+            mappings = supabase.table('observer_child_mappings').select("*").execute().data
+            if mappings:
+                df = st.dataframe(mappings)
+                
+                with st.expander("Manage Mappings"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        with st.form("add_mapping"):
+                            obs_id = st.text_input("Observer ID")
+                            child_id = st.text_input("Child ID")
+                            if st.form_submit_button("Add Mapping"):
+                                if obs_id and child_id:
+                                    supabase.table('observer_child_mappings').insert({
+                                        "observer_id": obs_id, 
+                                        "child_id": child_id
+                                    }).execute()
+                                    st.rerun()
+                    
+                    with col2:
+                        with st.form("remove_mapping"):
+                            mapping_id = st.number_input("Mapping ID to remove", min_value=1)
+                            if st.form_submit_button("Remove Mapping"):
+                                supabase.table('observer_child_mappings').delete().eq("id", mapping_id).execute()
+                                st.rerun()
+            else:
+                st.info("No mappings found")
+
+        except Exception as e:
+            st.error(f"Database error: {str(e)}")
+
+    with tabs[1]:
+        st.subheader("Activity Logs")
+        try:
+            logs = supabase.table('observer_activity_logs').select("*").execute().data
+            if logs:
+                st.dataframe(logs)
+            else:
+                st.info("No activity logs found")
+        except Exception as e:
+            st.error(f"Database error: {str(e)}")
+
+    with tabs[2]:
+        st.subheader("System Health")
+        try:
+            observations = supabase.table('observations').select("id", count='exact').execute().count
+            st.metric("Total Observations", observations)
+        except Exception as e:
+            st.error(f"Database error: {str(e)}")
+
+def parent_dashboard(child_id):
+    st.title(f"Parent Portal - Child ID: {child_id}")
+    
+    try:
+        # Get observer mapping
+        mapping = supabase.table('observer_child_mappings').select("*").eq("child_id", child_id).execute().data
+        if not mapping:
+            st.warning("No observer assigned to this child")
+            return
+        
+        observer_id = mapping[0]['observer_id']
+        
+        # Get activity logs
+        logs = supabase.table('observer_activity_logs').select("*").eq("child_id", child_id).execute().data
+        
+        # Calculate metrics
+        total_logins = len([log for log in logs if log['action'] == 'login'])
+        total_time = sum(log.get('duration_minutes', 0) for log in logs)
+        reports_submitted = len([log for log in logs if log.get('report_id')])
+        
+        cols = st.columns(3)
+        cols[0].metric("Assigned Observer ID", observer_id)
+        cols[1].metric("Total Logins", total_logins)
+        cols[2].metric("Total Observation Time (mins)", total_time)
+        
+        st.subheader("Recent Activity")
+        if logs:
+            st.dataframe(logs[-5:])
+        else:
+            st.info("No recent activity")
+
+    except Exception as e:
+        st.error(f"Database error: {str(e)}")
 
 # Main App
 def main():
     extractor = ObservationExtractor()
 
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-    if 'username' not in st.session_state:
-        st.session_state.username = ""
+    # Session State Setup
+    if 'auth' not in st.session_state:
+        st.session_state.auth = {
+            'logged_in': False,
+            'role': None,
+            'user_id': None,
+            'start_time': None
+        }
+
     if 'user_info' not in st.session_state:
         st.session_state.user_info = {
             'student_name': '',
@@ -402,50 +498,102 @@ def main():
             'session_start': '',
             'session_end': ''
         }
+
     if 'audio_transcription' not in st.session_state:
         st.session_state.audio_transcription = ""
+
     if 'report_generated' not in st.session_state:
         st.session_state.report_generated = None
+
     if 'show_edit_transcript' not in st.session_state:
         st.session_state.show_edit_transcript = False
+
     if 'processing_mode' not in st.session_state:
         st.session_state.processing_mode = None
 
-    if not st.session_state.authenticated:
+    # Login Page
+    if not st.session_state.auth['logged_in']:
         st.title("Learning Observer Login")
 
         with st.form("login_form"):
-            username = st.text_input("Username")
+            username = st.text_input("Username / ID")
             password = st.text_input("Password", type="password")
+            role = st.selectbox("Role", ["Observer", "Parent"])
             submitted = st.form_submit_button("Login")
 
             if submitted:
-                st.session_state.authenticated = True
-                st.session_state.username = username
+                if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+                    st.session_state.auth = {
+                        'logged_in': True,
+                        'role': 'Admin',
+                        'user_id': 'admin',
+                        'start_time': datetime.now()
+                    }
+                else:
+                    st.session_state.auth = {
+                        'logged_in': True,
+                        'role': role,
+                        'user_id': username,
+                        'start_time': datetime.now()
+                    }
                 st.rerun()
-
         return
 
-    st.title(f"Welcome, {st.session_state.username}")
+    # Admin Dashboard
+    if st.session_state.auth['role'] == 'Admin':
+        admin_dashboard()
+        if st.button("Logout"):
+            st.session_state.auth = {'logged_in': False, 'role': None, 'user_id': None}
+            st.rerun()
+        return
+
+    # Parent Dashboard
+    if st.session_state.auth['role'] == 'Parent':
+        parent_dashboard(st.session_state.auth['user_id'])
+        if st.button("Logout"):
+            duration = (datetime.now() - st.session_state.auth['start_time']).seconds // 60
+            supabase.table('observer_activity_logs').insert({
+                "observer_id": "parent_portal",
+                "child_id": st.session_state.auth['user_id'],
+                "action": "logout",
+                "duration_minutes": duration
+            }).execute()
+            st.session_state.auth = {'logged_in': False, 'role': None, 'user_id': None}
+            st.rerun()
+        return
+
+    # Observer Dashboard
+    st.title(f"Observer Dashboard - ID: {st.session_state.auth['user_id']}")
+
+    supabase.table('observer_activity_logs').insert({
+        "observer_id": st.session_state.auth['user_id'],
+        "action": "login",
+        "timestamp": datetime.now().isoformat()
+    }).execute()
 
     if st.button("Logout"):
-        st.session_state.authenticated = False
-        st.session_state.username = ""
+        duration = (datetime.now() - st.session_state.auth['start_time']).seconds // 60
+        supabase.table('observer_activity_logs').insert({
+            "observer_id": st.session_state.auth['user_id'],
+            "action": "logout",
+            "duration_minutes": duration
+        }).execute()
+        st.session_state.auth = {'logged_in': False, 'role': None, 'user_id': None}
         st.rerun()
 
+    # Sidebar: Session Information
     with st.sidebar:
         st.subheader("Session Information")
-        
         st.session_state.user_info['student_name'] = st.text_input("Student Name:", value=st.session_state.user_info['student_name'])
         st.session_state.user_info['observer_name'] = st.text_input("Observer Name:", value=st.session_state.user_info['observer_name'])
         st.session_state.user_info['session_date'] = st.date_input("Session Date:").strftime('%d/%m/%Y')
-        
         col1, col2 = st.columns(2)
         with col1:
             st.session_state.user_info['session_start'] = st.time_input("Start Time:").strftime('%H:%M')
         with col2:
             st.session_state.user_info['session_end'] = st.time_input("End Time:").strftime('%H:%M')
 
+    # Select Processing Mode
     st.subheader("Select Processing Mode")
     col1, col2 = st.columns(2)
     with col1:
@@ -459,75 +607,60 @@ def main():
             st.session_state.audio_transcription = ""
             st.session_state.report_generated = None
 
+    # OCR Mode
     if st.session_state.processing_mode == "ocr":
         st.info("OCR Mode: Upload an image of an observation sheet")
-        
         uploaded_file = st.file_uploader("Upload Observation Sheet", type=["jpg", "jpeg", "png"])
-        
-        if uploaded_file is not None:
-            st.image(uploaded_file, caption="Uploaded Image", use_column_width=True)
-            
-            if st.button("Process Observation"):
-                with st.spinner("Processing..."):
-                    try:
-                        extracted_text = extractor.extract_text_with_ocr(uploaded_file)
-                        structured_data = extractor.process_with_groq(extracted_text)
-                        
-                        observations_text = structured_data.get("observations", "")
-                        if observations_text:
-                            report = extractor.generate_report_from_text(observations_text, st.session_state.user_info)
-                            st.session_state.report_generated = report
-                            
-                            supabase.table('observations').insert({
-                                "username": st.session_state.username,
-                                "student_name": structured_data.get("studentName", ""),
-                                "student_id": structured_data.get("studentId", ""),
-                                "class_name": structured_data.get("className", ""),
-                                "date": structured_data.get("date", ""),
-                                "observations": observations_text,
-                                "strengths": json.dumps(structured_data.get("strengths", [])),
-                                "areas_of_development": json.dumps(structured_data.get("areasOfDevelopment", [])),
-                                "recommendations": json.dumps(structured_data.get("recommendations", [])),
-                                "timestamp": datetime.now().isoformat(),
-                                "filename": uploaded_file.name,
-                                "full_data": json.dumps(structured_data)
-                            }).execute()
-                            
-                            st.success("Data processed and saved successfully!")
-                        else:
-                            st.error("No observations found in the extracted data")
-                            
-                    except Exception as e:
-                        st.error(f"Processing error: {str(e)}")
+        if uploaded_file and st.button("Process Observation"):
+            with st.spinner("Processing..."):
+                try:
+                    extracted_text = extractor.extract_text_with_ocr(uploaded_file)
+                    structured_data = extractor.process_with_groq(extracted_text)
 
+                    observations_text = structured_data.get("observations", "")
+                    if observations_text:
+                        report = extractor.generate_report_from_text(observations_text, st.session_state.user_info)
+                        st.session_state.report_generated = report
+
+                        supabase.table('observations').insert({
+                            "username": st.session_state.auth['user_id'],
+                            "student_name": structured_data.get("studentName", ""),
+                            "student_id": structured_data.get("studentId", ""),
+                            "class_name": structured_data.get("className", ""),
+                            "date": structured_data.get("date", ""),
+                            "observations": observations_text,
+                            "strengths": json.dumps(structured_data.get("strengths", [])),
+                            "areas_of_development": json.dumps(structured_data.get("areasOfDevelopment", [])),
+                            "recommendations": json.dumps(structured_data.get("recommendations", [])),
+                            "timestamp": datetime.now().isoformat(),
+                            "filename": uploaded_file.name,
+                            "full_data": json.dumps(structured_data)
+                        }).execute()
+                        st.success("Data processed and saved!")
+                    else:
+                        st.error("No observations found.")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+
+    # Audio Mode
     elif st.session_state.processing_mode == "audio":
         st.info("Audio Mode: Upload an audio recording of an observation session")
-        
-        uploaded_file = st.file_uploader("Choose an audio file", 
-                                       type=["wav", "mp3", "m4a", "mpeg", "mpg", "ogg", "flac", "aac", "wma", "aiff"])
-        
-        if uploaded_file is not None:
+        uploaded_file = st.file_uploader("Choose an audio file", type=["wav", "mp3", "m4a", "mpeg", "mpg", "ogg", "flac", "aac", "wma", "aiff"])
+        if uploaded_file:
             st.audio(uploaded_file)
-            
-            if (st.session_state.user_info['student_name'] and 
-                st.session_state.user_info['observer_name'] and 
-                st.session_state.user_info['session_start'] and 
-                st.session_state.user_info['session_end']):
-                
+            if all(st.session_state.user_info.values()):
                 if st.button("Process & Generate Report"):
                     if not ASSEMBLYAI_API_KEY:
-                        st.error("AssemblyAI API key is missing. Please configure it in your secrets.")
+                        st.error("Missing AssemblyAI API Key.")
                     else:
-                        with st.spinner("Step 1/2: Transcribing audio..."):
+                        with st.spinner("Step 1/2: Transcribing..."):
                             transcript = extractor.transcribe_with_assemblyai(uploaded_file)
                             st.session_state.audio_transcription = transcript
-                        
-                        with st.spinner("Step 2/2: Generating report with Gemini AI..."):
+                        with st.spinner("Step 2/2: Generating Report..."):
                             report = extractor.generate_report_from_text(transcript, st.session_state.user_info)
                             st.session_state.report_generated = report
-                            
                             supabase.table('observations').insert({
-                                "username": st.session_state.username,
+                                "username": st.session_state.auth['user_id'],
                                 "student_name": st.session_state.user_info['student_name'],
                                 "student_id": "",
                                 "class_name": "",
@@ -538,104 +671,47 @@ def main():
                                 "recommendations": json.dumps([]),
                                 "timestamp": datetime.now().isoformat(),
                                 "filename": uploaded_file.name,
-                                "full_data": json.dumps({
-                                    "transcript": transcript,
-                                    "report": report
-                                })
+                                "full_data": json.dumps({"transcript": transcript, "report": report})
                             }).execute()
             else:
-                st.warning("Please fill in all the session information in the sidebar.")
+                st.warning("Please fill all session info in the sidebar.")
 
+    # Edit Transcript
     if st.session_state.audio_transcription:
         if st.button("Edit Transcription" if not st.session_state.show_edit_transcript else "Hide Editor"):
             st.session_state.show_edit_transcript = not st.session_state.show_edit_transcript
-        
         if st.session_state.show_edit_transcript:
             st.subheader("Edit Transcription")
-            edited_transcript = st.text_area("You can edit the transcript below:", 
-                                            value=st.session_state.audio_transcription, 
-                                            height=200)
-            
-            if edited_transcript != st.session_state.audio_transcription:
-                st.session_state.audio_transcription = edited_transcript
-            
+            edited = st.text_area("Edit here:", value=st.session_state.audio_transcription, height=200)
+            if edited != st.session_state.audio_transcription:
+                st.session_state.audio_transcription = edited
             if st.button("Regenerate Report with Edited Transcript"):
-                with st.spinner("Generating report with Gemini AI..."):
-                    report = extractor.generate_report_from_text(
-                        st.session_state.audio_transcription,
-                        st.session_state.user_info
-                    )
+                with st.spinner("Regenerating Report..."):
+                    report = extractor.generate_report_from_text(edited, st.session_state.user_info)
                     st.session_state.report_generated = report
 
+    # Show Report
     if st.session_state.report_generated:
         st.subheader("Generated Report")
-        
         st.markdown(st.session_state.report_generated)
-        
-        docx_file = extractor.create_word_document(st.session_state.report_generated)
-        
-        student_name = st.session_state.user_info['student_name'].replace(" ", "_")
-        date = st.session_state.user_info['session_date'].replace("/", "-")
-        filename = f"Observer_Report_{student_name}_{date}.docx"
-        
-        st.download_button(
-            label="Download as Word Document",
-            data=docx_file,
-            file_name=filename,
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
 
-        # Email functionality
+        docx_file = extractor.create_word_document(st.session_state.report_generated)
+        filename = f"Observer_Report_{st.session_state.user_info['student_name'].replace(' ', '_')}_{st.session_state.user_info['session_date'].replace('/', '-')}.docx"
+        st.download_button("Download Word Document", data=docx_file, file_name=filename, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+        # Email Section
         st.subheader("Email Report")
         with st.form("email_form"):
-            recipient_email = st.text_input("Recipient Email", value="parent@example.com")
-            email_subject = st.text_input("Subject", value=f"Observer Report for {st.session_state.user_info['student_name']}")
-            
-            email_content = f"""
-            <html>
-                <body>
-                    <h2>Observer Report</h2>
-                    <p><strong>Student:</strong> {st.session_state.user_info['student_name']}</p>
-                    <p><strong>Date:</strong> {st.session_state.user_info['session_date']}</p>
-                    <p><strong>Observer:</strong> {st.session_state.user_info['observer_name']}</p>
-                    <hr>
-                    <pre>{st.session_state.report_generated}</pre>
-                </body>
-            </html>
-            """
-            
-            submitted = st.form_submit_button("Send Email")
-            if submitted:
-                if not recipient_email:
-                    st.error("Please enter a recipient email address")
-                else:
-                    success, message = extractor.send_email(recipient_email, email_subject, email_content)
-                    if success:
-                        st.success(message)
-                    else:
-                        st.error(message)
+            recipient = st.text_input("Recipient Email")
+            subject = st.text_input("Subject", value=f"Observer Report for {st.session_state.user_info['student_name']}")
+            email_body = f"""<html><body><h2>Observer Report</h2><p><strong>Student:</strong> {st.session_state.user_info['student_name']}</p><p><strong>Date:</strong> {st.session_state.user_info['session_date']}</p><p><strong>Observer:</strong> {st.session_state.user_info['observer_name']}</p><hr><pre>{st.session_state.report_generated}</pre></body></html>"""
+            if st.form_submit_button("Send Email"):
+                success, msg = extractor.send_email(recipient, subject, email_body)
+                st.success(msg) if success else st.error(msg)
 
-    with st.expander("Use sample data for testing"):
+    # Sample Data
+    with st.expander("Use sample data"):
         if st.button("Load sample transcript"):
-            sample_transcript = """
-            So today I'd like to talk about my day as a student. This morning I woke up around 7 AM and spent some time reviewing my math notes before school. I've been trying to understand calculus better. I had breakfast with my family and then caught the bus at 8.
-
-            At school, I had four classes. The science class was really interesting because we did an experiment about chemical reactions. I noticed that when we mixed certain compounds, the color changed immediately, which made me wonder about the electron transfer happening. During lunch, I sat with my friends and we talked about the upcoming science fair.
-
-            In the afternoon, I had my debate club meeting. We're preparing for a competition next month. I'm working on improving my rebuttal techniques. I think I'm getting better at thinking on my feet when challenged with counterarguments.
-
-            After school, I went to the library for about an hour to work on my history project. I'm researching the industrial revolution and its impact on social structures. It's fascinating how technology changes society.
-
-            When I got home around 5 PM, I spent some time playing piano. I'm learning a new piece by Mozart. It's challenging but I've been breaking it down into smaller sections to practice. After dinner with my family, I spent about two hours on homework, mostly math problems and some reading for English class.
-
-            Before bed, I watched a short documentary about space exploration on YouTube. I've always been curious about astronomy. I think that's everything important from my day.
-            """
-            st.session_state.audio_transcription = sample_transcript
+            st.session_state.audio_transcription = SAMPLE_TRANSCRIPT
             st.experimental_rerun()
 
-    st.markdown("---")
-    st.markdown("The Observer Report Generator")
-
-
-if __name__ == "__main__":
-    main()
