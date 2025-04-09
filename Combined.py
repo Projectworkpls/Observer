@@ -513,8 +513,8 @@ def main():
 
     # Admin credentials
     ADMIN_CREDS = {
-        "username": st.secrets.get("ADMIN_USER"),
-        "password": st.secrets.get("ADMIN_PASS")
+        "username": st.secrets.get("ADMIN_USER","admin"),
+        "password": st.secrets.get("ADMIN_PASS","hello")
     }
 
     # Login Page
