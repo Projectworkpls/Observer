@@ -363,20 +363,20 @@ Be creative in extracting information based on context."""
 
         return docx_bytes
 
-    def send_email(self, recipient_email, subject, message):
+def send_email(self, recipient_email, subject, message):
     """Send email with the observation report"""
     sender_email = "parth.workforai@gmail.com"
     sender_password = st.secrets["EMAIL_PASSWORD"]  # Add this to your secrets.toml
-
+    
     smtp_server = "smtp.gmail.com"
     smtp_port = 587
-
+    
     msg = MIMEMultipart()
     msg["From"] = sender_email
     msg["To"] = recipient_email
     msg["Subject"] = subject
     msg.attach(MIMEText(message, "html"))
-
+    
     try:
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
