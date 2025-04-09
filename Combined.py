@@ -24,23 +24,23 @@ st.set_page_config(
 # Initialize Supabase client
 @st.cache_resource
 def init_supabase():
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    SUPABASE_URL = st.secrets.get["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets.get["SUPABASE_KEY"]
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = init_supabase()
 
 # Configure Google AI API
-genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+genai.configure(api_key=st.secrets.get["GOOGLE_API_KEY"])
 
 # Set up AssemblyAI API key
 assemblyai_key = st.secrets.get("ASSEMBLYAI_API_KEY", "")
 
 class ObservationExtractor:
     def __init__(self):
-        self.ocr_api_key = st.secrets["OCR_API_KEY"]
-        self.groq_api_key = st.secrets["GROQ_API_KEY"]
-        self.gemini_api_key = st.secrets["GOOGLE_API_KEY"]
+        self.ocr_api_key = st.secrets.get"OCR_API_KEY"]
+        self.groq_api_key = st.secrets.get["GROQ_API_KEY"]
+        self.gemini_api_key = st.secrets.get["GOOGLE_API_KEY"]
 
     def image_to_base64(self, image_file):
         """Convert image file to base64 string"""
@@ -128,7 +128,9 @@ Format your response as JSON with the following structure:
 }
 
 For observations, provide full detailed descriptions like:
-"The student learned how to make maggi from their mom through in-person mode, including all steps from boiling water to adding spices"... Be creative in extracting information based on context."""
+"The student learned how to make maggi from their mom through in-person mode, including all steps from boiling water to adding spices"
+
+Be creative in extracting information based on context."""
 
             # Send request to Groq API
             response = requests.post(
@@ -266,7 +268,9 @@ For observations, provide full detailed descriptions like:
            - Problem-solving skills (effective/developing/needs guidance)
            - Creativity and imagination (high/moderate/low)
            - Decision-making style (confident/hesitant/experimental)
-           - Any unique perspectives or ideas... 4. Communication Skills & Thought Clarity - Evaluate:
+           - Any unique perspectives or ideas
+
+        4. Communication Skills & Thought Clarity - Evaluate:
            - Confidence level (low/medium/high)
            - Clarity of thought (clear/slightly clear/confused)
            - Participation & engagement (active/moderate/passive)
@@ -363,32 +367,32 @@ For observations, provide full detailed descriptions like:
 
         return docx_bytes
 
-    def send_email(self, recipient_email, subject, message):
-        """Send email with the observation report"""
-        sender_email = "parth.workforai@gmail.com"
-        sender_password = st.secrets["EMAIL_PASSWORD"]  # Add this to your secrets.toml
+def send_email(self, recipient_email, subject, message):
+    """Send email with the observation report"""
+    sender_email = "parth.workforai@gmail.com"
+    sender_password = st.secrets.get["EMAIL_PASSWORD"]  # Add this to your secrets.toml
 
-        smtp_server = "smtp.gmail.com"
-        smtp_port = 587
+    smtp_server = "smtp.gmail.com"
+    smtp_port = 587
 
-        msg = MIMEMultipart()
-        msg["From"] = sender_email
-        msg["To"] = recipient_email
-        msg["Subject"] = subject
-        msg.attach(MIMEText(message, "html"))
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = recipient_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(message, "html"))
 
-        try:
-            server = smtplib.SMTP(smtp_server, smtp_port)
-            server.starttls()
-            server.login(sender_email, sender_password)
-            server.send_message(msg)
-            return True, f"Email sent to {recipient_email}"
-        except smtplib.SMTPAuthenticationError:
-            return False, "Error: Authentication failed. Check your email and password."
-        except smtplib.SMTPException as e:
-            return False, f"Error: Failed to send email. {e}"
-        finally:
-            server.quit()
+    try:
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        return True, f"Email sent to {recipient_email}"
+    except smtplib.SMTPAuthenticationError:
+        return False, "Error: Authentication failed. Check your email and password."
+    except smtplib.SMTPException as e:
+        return False, f"Error: Failed to send email. {e}"
+    finally:
+        server.quit()
 
 def admin_dashboard():
     st.title("Admin Dashboard")
@@ -447,7 +451,8 @@ def parent_dashboard(child_id):
 
     try:
         # Get observer ID
-        mapping = supabase.table('observer_child_mappings').select("observer_id").eq("child_id", child_id).execute().data
+        mapping = supabase.table('observer_child_mappings').select("observer_id").eq("child_id",
+                                                                                     child_id).execute().data
         if not mapping:
             st.warning("No observer assigned")
             return
@@ -476,6 +481,7 @@ def parent_dashboard(child_id):
 
     except Exception as e:
         st.error(f"Database error: {str(e)}")
+
 
 # Main App
 def main():
@@ -513,3 +519,178 @@ def main():
 
     # Login Page
     if not st.session_state.auth['logged_in']:
+        st.title("Learning Observer Login")
+        with st.form("login"):
+            role = st.selectbox("Role", ["Observer", "Parent", "Admin"])
+            user_id = st.text_input("ID/Username")
+            password = st.text_input("Password", type="password")
+            if st.form_submit_button("Login"):
+                if role == "Admin":
+                    if user_id == ADMIN_CREDS["username"] and password == ADMIN_CREDS["password"]:
+                        st.session_state.auth = {'logged_in': True, 'role': 'Admin', 'user_id': 'admin'}
+                        st.rerun()
+                else:
+                    st.session_state.auth = {'logged_in': True, 'role': role, 'user_id': user_id}
+                    st.rerun()
+        return
+
+    # Logout Button (common)
+    def logout_button():
+        if st.button("Logout"):
+            if st.session_state.auth['role'] == "Observer":
+                supabase.table('observer_activity_logs').insert({
+                    "observer_id": st.session_state.auth['user_id'],
+                    "child_id": "N/A",
+                    "action": "logout",
+                    "duration_minutes": 0
+                }).execute()
+            st.session_state.auth = {'logged_in': False, 'role': None, 'user_id': None}
+            st.rerun()
+
+    # Admin Dashboard
+    if st.session_state.auth['role'] == 'Admin':
+        admin_dashboard()
+        logout_button()
+        return
+
+    # Parent Dashboard
+    if st.session_state.auth['role'] == 'Parent':
+        parent_dashboard(st.session_state.auth['user_id'])
+        logout_button()
+        return
+
+    # Observer Dashboard
+    st.title(f"Observer Dashboard - ID: {st.session_state.auth['user_id']}")
+    supabase.table('observer_activity_logs').insert({
+        "observer_id": st.session_state.auth['user_id'],
+        "child_id": "N/A",
+        "action": "login",
+        "duration_minutes": 0
+    }).execute()
+
+    logout_button()
+
+    # Sidebar for user information
+    with st.sidebar:
+        st.subheader("Session Information")
+        st.session_state.user_info['student_name'] = st.text_input("Student Name:", value=st.session_state.user_info['student_name'])
+        st.session_state.user_info['observer_name'] = st.text_input("Observer Name:", value=st.session_state.user_info['observer_name'])
+        st.session_state.user_info['session_date'] = st.date_input("Session Date:").strftime('%d/%m/%Y')
+        col1, col2 = st.columns(2)
+        with col1:
+            st.session_state.user_info['session_start'] = st.time_input("Start Time:").strftime('%H:%M')
+        with col2:
+            st.session_state.user_info['session_end'] = st.time_input("End Time:").strftime('%H:%M')
+
+    # Choose processing mode
+    st.subheader("Select Processing Mode")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("OCR Mode (Image Upload)"):
+            st.session_state.processing_mode = "ocr"
+            st.session_state.audio_transcription = ""
+            st.session_state.report_generated = None
+    with col2:
+        if st.button("Audio Mode (Recording Upload)"):
+            st.session_state.processing_mode = "audio"
+            st.session_state.audio_transcription = ""
+            st.session_state.report_generated = None
+
+    # OCR Processing
+    if st.session_state.processing_mode == "ocr":
+        st.info("OCR Mode: Upload an image of an observation sheet")
+        uploaded_file = st.file_uploader("Upload Observation Sheet", type=["jpg", "jpeg", "png"])
+        if uploaded_file and st.button("Process Observation"):
+            with st.spinner("Processing..."):
+                try:
+                    extracted_text = extractor.extract_text_with_ocr(uploaded_file)
+                    structured_data = extractor.process_with_groq(extracted_text)
+                    observations_text = structured_data.get("observations", "")
+                    if observations_text:
+                        report = extractor.generate_report_from_text(observations_text, st.session_state.user_info)
+                        st.session_state.report_generated = report
+                        supabase.table('observations').insert({
+                            "username": st.session_state.auth['user_id'],
+                            "student_name": structured_data.get("studentName", ""),
+                            "student_id": structured_data.get("studentId", ""),
+                            "class_name": structured_data.get("className", ""),
+                            "date": structured_data.get("date", ""),
+                            "observations": observations_text,
+                            "strengths": json.dumps(structured_data.get("strengths", [])),
+                            "areas_of_development": json.dumps(structured_data.get("areasOfDevelopment", [])),
+                            "recommendations": json.dumps(structured_data.get("recommendations", [])),
+                            "timestamp": datetime.now().isoformat(),
+                            "filename": uploaded_file.name,
+                            "full_data": json.dumps(structured_data)
+                        }).execute()
+                        st.success("Data processed and saved successfully!")
+                    else:
+                        st.error("No observations found in the extracted data")
+                except Exception as e:
+                    st.error(f"Processing error: {str(e)}")
+
+    # Audio Processing
+    elif st.session_state.processing_mode == "audio":
+        st.info("Audio Mode: Upload an audio recording of an observation session")
+        uploaded_file = st.file_uploader("Choose an audio file", type=["wav", "mp3", "m4a", "mpeg", "ogg", "flac", "aac", "wma", "aiff"])
+        if uploaded_file and st.button("Process & Generate Report"):
+            if not assemblyai_key:
+                st.error("AssemblyAI API key is missing.")
+            else:
+                with st.spinner("Step 1/2: Transcribing audio..."):
+                    transcript = extractor.transcribe_with_assemblyai(uploaded_file)
+                    st.session_state.audio_transcription = transcript
+                with st.spinner("Step 2/2: Generating report..."):
+                    report = extractor.generate_report_from_text(transcript, st.session_state.user_info)
+                    st.session_state.report_generated = report
+                    supabase.table('observations').insert({
+                        "username": st.session_state.auth['user_id'],
+                        "student_name": st.session_state.user_info['student_name'],
+                        "student_id": "",
+                        "class_name": "",
+                        "date": st.session_state.user_info['session_date'],
+                        "observations": transcript,
+                        "strengths": json.dumps([]),
+                        "areas_of_development": json.dumps([]),
+                        "recommendations": json.dumps([]),
+                        "timestamp": datetime.now().isoformat(),
+                        "filename": uploaded_file.name,
+                        "full_data": json.dumps({"transcript": transcript, "report": report})
+                    }).execute()
+
+    # Transcript Editor
+    if st.session_state.audio_transcription:
+        if st.button("Edit Transcription" if not st.session_state.show_edit_transcript else "Hide Editor"):
+            st.session_state.show_edit_transcript = not st.session_state.show_edit_transcript
+        if st.session_state.show_edit_transcript:
+            st.subheader("Edit Transcription")
+            edited = st.text_area("Edit transcript below:", value=st.session_state.audio_transcription, height=200)
+            if edited != st.session_state.audio_transcription:
+                st.session_state.audio_transcription = edited
+            if st.button("Regenerate Report with Edited Transcript"):
+                with st.spinner("Regenerating report..."):
+                    report = extractor.generate_report_from_text(edited, st.session_state.user_info)
+                    st.session_state.report_generated = report
+
+    # Report Display and Download
+    if st.session_state.report_generated:
+        st.subheader("Generated Report")
+        st.markdown(st.session_state.report_generated)
+        docx_file = extractor.create_word_document(st.session_state.report_generated)
+        student = st.session_state.user_info['student_name'].replace(" ", "_")
+        date = st.session_state.user_info['session_date'].replace("/", "-")
+        filename = f"Observer_Report_{student}_{date}.docx"
+        st.download_button("Download as Word Document", data=docx_file, file_name=filename,
+                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+        st.subheader("Email Report")
+        with st.form("email_form"):
+            to_email = st.text_input("Recipient Email", value="parent@example.com")
+            subject = st.text_input("Subject", value=f"Observer Report for {st.session_state.user_info['student_name']}")
+            submitted = st.form_submit_button("Send Email")
+            if submitted:
+                send_email(to_email, subject, st.session_state.report_generated)
+                st.success("Email sent successfully!")
+
+if __name__ == "__main__":
+    main()
