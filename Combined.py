@@ -31,7 +31,7 @@ def init_supabase():
 supabase = init_supabase()
 
 # Configure Google AI API
-genai.configure(api_key=st.secrets.get["GOOGLE_API_KEY"])
+genai.configure(api_key=st.secrets.get("GOOGLE_API_KEY"))
 
 # Set up AssemblyAI API key
 assemblyai_key = st.secrets.get("ASSEMBLYAI_API_KEY", "")
