@@ -38,9 +38,9 @@ assemblyai_key = st.secrets.get("ASSEMBLYAI_API_KEY", "")
 
 class ObservationExtractor:
     def __init__(self):
-        self.ocr_api_key = st.secrets.get["OCR_API_KEY"]
-        self.groq_api_key = st.secrets.get["GROQ_API_KEY"]
-        self.gemini_api_key = st.secrets.get["GOOGLE_API_KEY"]
+        self.ocr_api_key = st.secrets.get("OCR_API_KEY")
+        self.groq_api_key = st.secrets.get("GROQ_API_KEY")
+        self.gemini_api_key = st.secrets.get("GOOGLE_API_KEY")
 
     def image_to_base64(self, image_file):
         """Convert image file to base64 string"""
@@ -370,7 +370,7 @@ Be creative in extracting information based on context."""
 def send_email(self, recipient_email, subject, message):
     """Send email with the observation report"""
     sender_email = "parth.workforai@gmail.com"
-    sender_password = st.secrets.get["EMAIL_PASSWORD"]  # Add this to your secrets.toml
+    sender_password = st.secrets.get("EMAIL_PASSWORD")  # Add this to your secrets.toml
 
     smtp_server = "smtp.gmail.com"
     smtp_port = 587
