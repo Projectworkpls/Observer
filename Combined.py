@@ -24,8 +24,8 @@ st.set_page_config(
 # Initialize Supabase client
 @st.cache_resource
 def init_supabase():
-    SUPABASE_URL = st.secrets.get["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets.get["SUPABASE_KEY"]
+    SUPABASE_URL = st.secrets.get("SUPABASE_URL")
+    SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = init_supabase()
