@@ -392,32 +392,39 @@ def send_email(self, recipient_email, subject, message):
 
 def admin_dashboard():
     st.title("Admin Dashboard")
-
-    tabs = st.tabs(["Mappings", "Activity", "Users"])
-
+    
+    tabs = st.tabs(["Mappings Management", "Activity Logs", "System Metrics"])
+    
     with tabs[0]:
         st.subheader("Observer-Child Mappings")
         try:
             mappings = supabase.table('observer_child_mappings').select("*").execute().data
             if mappings:
                 st.dataframe(mappings)
-            else:
-                st.info("No mappings found")
-
-            with st.expander("Add New Mapping"):
-                with st.form("add_mapping"):
-                    obs_id = st.text_input("Observer ID")
-                    child_id = st.text_input("Child ID")
-                    if st.form_submit_button("Add"):
-                        if obs_id and child_id:
+                
+                with st.expander("Add New Mapping"):
+                    with st.form("add_mapping_form"):
+                        obs_id = st.text_input("Observer ID")
+                        child_id = st.text_input("Child ID")
+                        if st.form_submit_button("Add"):
                             supabase.table('observer_child_mappings').insert({
-                                "observer_id": obs_id,
+                                "observer_id": obs_id, 
                                 "child_id": child_id
                             }).execute()
                             st.rerun()
+                
+                with st.expander("Remove Mapping"):
+                    with st.form("remove_mapping_form"):
+                        mapping_id = st.number_input("Mapping ID to remove", min_value=1)
+                        if st.form_submit_button("Remove"):
+                            supabase.table('observer_child_mappings').delete().eq("id", mapping_id).execute()
+                            st.rerun()
+            else:
+                st.info("No mappings found in database")
+
         except Exception as e:
             st.error(f"Database error: {str(e)}")
-
+    
     with tabs[1]:
         st.subheader("Activity Logs")
         try:
@@ -425,58 +432,138 @@ def admin_dashboard():
             if logs:
                 st.dataframe(logs)
             else:
-                st.info("No activity logs")
+                st.info("No activity logs found")
         except Exception as e:
             st.error(f"Database error: {str(e)}")
-
+    
     with tabs[2]:
-        st.subheader("User Management")
+        st.subheader("System Metrics")
         try:
-            users = supabase.table('observations').select("username").execute().data
-            if users:
-                st.write("Registered Observers:")
-                st.write(list({u['username'] for u in users}))
-            else:
-                st.info("No users found")
+            observations_count = supabase.table('observations').select("id", count='exact').execute().count
+            users_count = supabase.table('observer_child_mappings').select("observer_id").execute().count
+            st.metric("Total Observations", observations_count)
+            st.metric("Registered Observers", users_count)
         except Exception as e:
             st.error(f"Database error: {str(e)}")
 
-# Parent Dashboard
-def parent_dashboard(child_id):
-    st.title(f"Parent Portal - Child ID: {child_id}")
-
+def parent_dashboard():
+    st.title("Parent Portal")
+    
+    child_id = st.text_input("Enter your Child ID to view details")
+    if not child_id:
+        return
+    
     try:
-        # Get observer ID
-        mapping = supabase.table('observer_child_mappings').select("observer_id").eq("child_id",
-                                                                                     child_id).execute().data
+        mapping = supabase.table('observer_child_mappings').select("*").eq("child_id", child_id).execute().data
         if not mapping:
-            st.warning("No observer assigned")
+            st.warning("No observer assigned for this Child ID")
             return
-
+        
         observer_id = mapping[0]['observer_id']
-
-        # Get activity logs
-        logs = supabase.table('observer_activity_logs').select("*").eq("child_id", child_id).execute().data
-
-        # Calculate metrics
-        total_logins = len([log for log in logs if log['action'] == 'login'])
-        total_time = sum(log.get('duration_minutes', 0) for log in logs)
-        reports_submitted = len([log for log in logs if log.get('report_id')])
-
-        # Display info
-        cols = st.columns(3)
-        cols[0].metric("Assigned Observer", observer_id)
-        cols[1].metric("Total Logins", total_logins)
-        cols[2].metric("Total Observation Time (mins)", total_time)
-
-        st.subheader("Recent Activity")
-        if logs:
-            st.dataframe(logs[-10:])
+        activity_logs = supabase.table('observer_activity_logs').select("*").eq("child_id", child_id).execute().data
+        reports = supabase.table('observations').select("*").eq("child_id", child_id).execute().data
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Assigned Observer ID", observer_id)
+        col2.metric("Total Sessions", len(activity_logs))
+        col3.metric("Total Reports Generated", len(reports))
+        
+        st.subheader("Recent Activity Timeline")
+        if activity_logs:
+            st.dataframe(activity_logs[-10:])
         else:
-            st.info("No recent activity")
+            st.info("No recent activity found")
+        
+        st.subheader("Available Reports")
+        if reports:
+            for report in reports:
+                with st.expander(f"Report from {report.get('date', 'Unknown date')}"):
+                    st.write(report.get('observations', 'No content available'))
+        else:
+            st.info("No reports available for this child")
 
     except Exception as e:
         st.error(f"Database error: {str(e)}")
+
+def observer_dashboard(username):
+    st.title(f"Observer Dashboard - ID: {username}")
+    
+    with st.sidebar:
+        st.subheader("Session Information")
+        user_info = {
+            'student_name': st.text_input("Student Name"),
+            'observer_name': st.text_input("Observer Name"),
+            'session_date': st.date_input("Session Date").strftime('%d/%m/%Y'),
+            'session_start': st.time_input("Start Time").strftime('%H:%M'),
+            'session_end': st.time_input("End Time").strftime('%H:%M')
+        }
+    
+    extractor = ObservationExtractor()
+    processing_mode = st.radio("Select Processing Mode", ["OCR", "Audio"], horizontal=True)
+    
+    if processing_mode == "OCR":
+        uploaded_file = st.file_uploader("Upload Observation Sheet", type=["jpg", "jpeg", "png"])
+        if uploaded_file and st.button("Process"):
+            with st.spinner("Processing..."):
+                try:
+                    text = extractor.extract_text_with_ocr(uploaded_file)
+                    data = extractor.process_with_groq(text)
+                    report = extractor.generate_report_from_text(data['observations'], user_info)
+                    
+                    supabase.table('observations').insert({
+                        "username": username,
+                        "student_name": data['studentName'],
+                        "student_id": data['studentId'],
+                        "child_id": data['studentId'],
+                        "observer_id": username,
+                        "observations": data['observations'],
+                        "timestamp": datetime.now().isoformat(),
+                        "full_data": json.dumps(data)
+                    }).execute()
+                    
+                    st.session_state.report = report
+                except Exception as e:
+                    st.error(str(e))
+    
+    elif processing_mode == "Audio":
+        uploaded_file = st.file_uploader("Upload Audio File", type=["wav", "mp3", "m4a"])
+        if uploaded_file and st.button("Process"):
+            with st.spinner("Transcribing..."):
+                transcript = extractor.transcribe_with_assemblyai(uploaded_file)
+                report = extractor.generate_report_from_text(transcript, user_info)
+                
+                supabase.table('observations').insert({
+                    "username": username,
+                    "student_name": user_info['student_name'],
+                    "child_id": "AUDIO_SESSION",
+                    "observer_id": username,
+                    "observations": transcript,
+                    "timestamp": datetime.now().isoformat(),
+                    "full_data": json.dumps({"transcript": transcript})
+                }).execute()
+                
+                st.session_state.report = report
+    
+    if 'report' in st.session_state:
+        st.subheader("Generated Report")
+        st.markdown(st.session_state.report)
+        
+        docx_file = extractor.create_word_document(st.session_state.report)
+        st.download_button(
+            "Download Report",
+            data=docx_file,
+            file_name="Observer_Report.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        
+        with st.form("email_form"):
+            email = st.text_input("Recipient Email")
+            if st.form_submit_button("Send Email"):
+                success, message = extractor.send_email(email, "Observer Report", st.session_state.report)
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
 
 
 # Main App
@@ -485,11 +572,7 @@ def main():
 
     # Session State Initialization
     if 'auth' not in st.session_state:
-        st.session_state.auth = {
-            'logged_in': False,
-            'role': None,
-            'user_id': None
-        }
+        st.session_state.auth = {'logged_in': False, 'role': None, 'user_id': None}
     if 'user_info' not in st.session_state:
         st.session_state.user_info = {
             'student_name': '',
@@ -516,21 +599,19 @@ def main():
     # Login Page
     if not st.session_state.auth['logged_in']:
         st.title("Learning Observer Login")
-        with st.form("login"):
+        with st.form("login_form"):
             role = st.selectbox("Role", ["Observer", "Parent", "Admin"])
-            user_id = st.text_input("ID/Username")
+            username = st.text_input("Username/ID")
             password = st.text_input("Password", type="password")
             if st.form_submit_button("Login"):
-                if role == "Admin":
-                    if user_id == ADMIN_CREDS["username"] and password == ADMIN_CREDS["password"]:
-                        st.session_state.auth = {'logged_in': True, 'role': 'Admin', 'user_id': 'admin'}
-                        st.rerun()
+                if role == "Admin" and username == ADMIN_CREDS["username"] and password == ADMIN_CREDS["password"]:
+                    st.session_state.auth = {'logged_in': True, 'role': 'Admin', 'user_id': 'admin'}
                 else:
-                    st.session_state.auth = {'logged_in': True, 'role': role, 'user_id': user_id}
-                    st.rerun()
+                    st.session_state.auth = {'logged_in': True, 'role': role, 'user_id': username}
+                st.rerun()
         return
 
-    # Logout Button (common)
+    # Common Logout Button
     def logout_button():
         if st.button("Logout"):
             if st.session_state.auth['role'] == "Observer":
@@ -690,3 +771,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
