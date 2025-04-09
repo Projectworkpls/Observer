@@ -38,7 +38,7 @@ assemblyai_key = st.secrets.get("ASSEMBLYAI_API_KEY", "")
 
 class ObservationExtractor:
     def __init__(self):
-        self.ocr_api_key = st.secrets.get"OCR_API_KEY"]
+        self.ocr_api_key = st.secrets.get["OCR_API_KEY"]
         self.groq_api_key = st.secrets.get["GROQ_API_KEY"]
         self.gemini_api_key = st.secrets.get["GOOGLE_API_KEY"]
 
