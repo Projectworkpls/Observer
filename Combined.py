@@ -366,7 +366,7 @@ Be creative in extracting information based on context."""
 def send_email(self, recipient_email, subject, message):
     """Send email with the observation report"""
     sender_email = "parth.workforai@gmail.com"
-    sender_password = st.secrets["EMAIL_PASSWORD"]  # Add this to your secrets.toml
+    sender_password = st.secrets.get["EMAIL_PASSWORD"]  # Add this to your secrets.toml
     
     smtp_server = "smtp.gmail.com"
     smtp_port = 587
