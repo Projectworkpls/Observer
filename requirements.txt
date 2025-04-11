@@ -4,7 +4,5 @@ requests
 google-generativeai
 python-docx
 python-multipart
-google-auth-oauthlib
 google-auth
-smtplib  # part of standard library, no need to include
-email    # part of standard library, no need to include
+google-auth-oauthlib
