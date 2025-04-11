@@ -13,6 +13,11 @@ import io
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+import os
+import pathlib
 
 # Set page config
 st.set_page_config(
@@ -21,12 +26,14 @@ st.set_page_config(
     page_icon="📝"
 )
 
+
 # Initialize Supabase client
 @st.cache_resource
 def init_supabase():
     SUPABASE_URL = st.secrets.get("SUPABASE_URL")
     SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
+
 
 supabase = init_supabase()
 
@@ -35,6 +42,7 @@ genai.configure(api_key=st.secrets.get("GOOGLE_API_KEY"))
 
 # Set up AssemblyAI API key
 assemblyai_key = st.secrets.get("ASSEMBLYAI_API_KEY", "")
+
 
 class ObservationExtractor:
     def __init__(self):
@@ -367,32 +375,68 @@ Be creative in extracting information based on context."""
 
         return docx_bytes
 
-def send_email(self, recipient_email, subject, message):
-    """Send email with the observation report"""
-    sender_email = "parth.workforai@gmail.com"
-    sender_password = st.secrets.get("EMAIL_PASSWORD")  # Add this to your secrets.toml
+    def send_email(self, recipient_email, subject, message):
+        """Send email with the observation report"""
+        sender_email = "parth.workforai@gmail.com"
+        sender_password = st.secrets.get("EMAIL_PASSWORD")  # Add this to your secrets.toml
 
-    smtp_server = "smtp.gmail.com"
-    smtp_port = 587
+        smtp_server = "smtp.gmail.com"
+        smtp_port = 587
 
-    msg = MIMEMultipart()
-    msg["From"] = sender_email
-    msg["To"] = recipient_email
-    msg["Subject"] = subject
-    msg.attach(MIMEText(message, "html"))
+        msg = MIMEMultipart()
+        msg["From"] = sender_email
+        msg["To"] = recipient_email
+        msg["Subject"] = subject
+        msg.attach(MIMEText(message, "html"))
 
-    try:
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.send_message(msg)
-        return True, f"Email sent to {recipient_email}"
-    except smtplib.SMTPAuthenticationError:
-        return False, "Error: Authentication failed. Check your email and password."
-    except smtplib.SMTPException as e:
-        return False, f"Error: Failed to send email. {e}"
-    finally:
-        server.quit()
+        try:
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+            return True, f"Email sent to {recipient_email}"
+        except smtplib.SMTPAuthenticationError:
+            return False, "Error: Authentication failed. Check your email and password."
+        except smtplib.SMTPException as e:
+            return False, f"Error: Failed to send email. {e}"
+        finally:
+            server.quit()
+
+    # Add after the ObservationExtractor class (around line 417)
+
+
+def create_google_oauth_flow():
+    """Initialize the OAuth flow for Google authentication"""
+    client_config = {
+        "web": {
+            "client_id": st.secrets.get("GOOGLE_CLIENT_ID"),
+            "client_secret": st.secrets.get("GOOGLE_CLIENT_SECRET"),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [st.secrets.get("GOOGLE_REDIRECT_URI")],
+        }
+    }
+
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=["https://www.googleapis.com/auth/userinfo.email",
+                "https://www.googleapis.com/auth/userinfo.profile",
+                "openid"],
+        redirect_uri=st.secrets.get("GOOGLE_REDIRECT_URI")
+    )
+    return flow
+
+
+def get_google_user_info(credentials):
+    """Fetch user information from Google using authenticated credentials"""
+    response = requests.get(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {credentials.token}"}
+    )
+    if response.status_code == 200:
+        return response.json()
+    return None
+
 
 def admin_dashboard():
     st.title("Admin Dashboard")
@@ -404,7 +448,18 @@ def admin_dashboard():
         try:
             mappings = supabase.table('observer_child_mappings').select("*").execute().data
             if mappings:
-                st.dataframe(mappings)
+                # Add a column for delete action buttons
+                for i, mapping in enumerate(mappings):
+                    col1, col2, col3 = st.columns([3, 3, 1])
+                    with col1:
+                        st.write(f"Observer ID: {mapping['observer_id']}")
+                    with col2:
+                        st.write(f"Child ID: {mapping['child_id']}")
+                    with col3:
+                        if st.button("Delete", key=f"delete_{mapping['id']}"):
+                            supabase.table('observer_child_mappings').delete().eq('id', mapping['id']).execute()
+                            st.success("Mapping deleted successfully!")
+                            st.rerun()
             else:
                 st.info("No mappings found")
 
@@ -445,6 +500,7 @@ def admin_dashboard():
         except Exception as e:
             st.error(f"Database error: {str(e)}")
 
+
 # Parent Dashboard
 def parent_dashboard(child_id):
     st.title(f"Parent Portal - Child ID: {child_id}")
@@ -484,6 +540,7 @@ def parent_dashboard(child_id):
 
 
 # Main App
+# Main App
 def main():
     extractor = ObservationExtractor()
 
@@ -492,7 +549,10 @@ def main():
         st.session_state.auth = {
             'logged_in': False,
             'role': None,
-            'user_id': None
+            'user_id': None,
+            'email': None,
+            'name': None,
+            'picture': None
         }
     if 'user_info' not in st.session_state:
         st.session_state.user_info = {
@@ -510,16 +570,74 @@ def main():
         st.session_state.show_edit_transcript = False
     if 'processing_mode' not in st.session_state:
         st.session_state.processing_mode = None
+    # Add new flag for admin initial login
+    if 'admin_initial_login' not in st.session_state:
+        st.session_state.admin_initial_login = True
 
     # Admin credentials
     ADMIN_CREDS = {
-        "username": st.secrets.get("ADMIN_USER","admin"),
-        "password": st.secrets.get("ADMIN_PASS","hello")
+        "username": st.secrets.get("ADMIN_USER", "admin"),
+        "password": st.secrets.get("ADMIN_PASS", "hello")
     }
+
+    # Check for OAuth callback
+    query_params = st.experimental_get_query_params()
+    if "code" in query_params:
+        try:
+            code = query_params["code"][0]
+
+            # Exchange code for credentials
+            flow = create_google_oauth_flow()
+            flow.fetch_token(code=code)
+            credentials = flow.credentials
+
+            # Get user info
+            user_info = get_google_user_info(credentials)
+
+            if user_info:
+                # Check if user exists in database or assign a default role
+                email = user_info.get("email")
+
+                # Query Supabase to see if this email exists and what role they have
+                user_data = supabase.table('users').select("*").eq("email", email).execute().data
+
+                if user_data:
+                    role = user_data[0]['role']
+                    user_id = user_data[0]['id']
+                else:
+                    # Create new user with default role
+                    response = supabase.table('users').insert({
+                        "email": email,
+                        "name": user_info.get("name"),
+                        "role": "Observer",  # Default role
+                        "picture": user_info.get("picture")
+                    }).execute()
+                    user_id = response.data[0]['id']
+                    role = "Observer"
+
+                # Update session state
+                st.session_state.auth = {
+                    'logged_in': True,
+                    'role': role,
+                    'user_id': user_id,
+                    'email': email,
+                    'name': user_info.get("name"),
+                    'picture': user_info.get("picture")
+                }
+
+                # Clear the URL parameters
+                st.experimental_set_query_params()
+                st.rerun()
+
+        except Exception as e:
+            st.error(f"Authentication error: {str(e)}")
+            st.experimental_set_query_params()
 
     # Login Page
     if not st.session_state.auth['logged_in']:
         st.title("Learning Observer Login")
+
+        # Regular login form
         with st.form("login"):
             role = st.selectbox("Role", ["Observer", "Parent", "Admin"])
             user_id = st.text_input("ID/Username")
@@ -528,10 +646,43 @@ def main():
                 if role == "Admin":
                     if user_id == ADMIN_CREDS["username"] and password == ADMIN_CREDS["password"]:
                         st.session_state.auth = {'logged_in': True, 'role': 'Admin', 'user_id': 'admin'}
+                        st.session_state.admin_initial_login = True  # Set to True on initial login
                         st.rerun()
                 else:
                     st.session_state.auth = {'logged_in': True, 'role': role, 'user_id': user_id}
                     st.rerun()
+
+        # Add Google Login button
+        st.write("──────── OR ────────")
+        if st.button("Sign in with Google"):
+            flow = create_google_oauth_flow()
+            auth_url, _ = flow.authorization_url(
+                access_type='offline',
+                include_granted_scopes='true',
+                prompt='consent'
+            )
+            st.markdown(f"""
+                <a href="{auth_url}" target="_self">
+                    <button style="
+                        background-color: #4285F4;
+                        color: white;
+                        padding: 10px 20px;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-size: 16px;
+                        display: flex;
+                        align-items: center;
+                        width: 100%;
+                        justify-content: center;
+                    ">
+                        <img src="https://developers.google.com/identity/images/g-logo.png" 
+                             style="height: 24px; margin-right: 10px;">
+                        Sign in with Google
+                    </button>
+                </a>
+            """, unsafe_allow_html=True)
+
         return
 
     # Logout Button (common)
@@ -547,11 +698,25 @@ def main():
             st.session_state.auth = {'logged_in': False, 'role': None, 'user_id': None}
             st.rerun()
 
-    # Admin Dashboard
+    # Admin Dashboard - Modified to check for initial login
     if st.session_state.auth['role'] == 'Admin':
-        admin_dashboard()
-        logout_button()
-        return
+        if st.session_state.admin_initial_login:
+            # Show a welcome or intermediate page instead of the full admin dashboard
+            st.title("Welcome, Admin")
+            st.write("You are logged in as an administrator.")
+
+            # Add a button to proceed to the dashboard
+            if st.button("Access Admin Dashboard"):
+                st.session_state.admin_initial_login = False
+                st.rerun()
+
+            logout_button()
+            return
+        else:
+            # Show the regular admin dashboard
+            admin_dashboard()
+            logout_button()
+            return
 
     # Parent Dashboard
     if st.session_state.auth['role'] == 'Parent':
@@ -561,6 +726,13 @@ def main():
 
     # Observer Dashboard
     st.title(f"Observer Dashboard - ID: {st.session_state.auth['user_id']}")
+
+    # Display user info if logged in via Google
+    if st.session_state.auth.get('email'):
+        st.sidebar.write(f"Logged in as: {st.session_state.auth['name']}")
+        if st.session_state.auth.get('picture'):
+            st.sidebar.image(st.session_state.auth['picture'], width=50)
+
     supabase.table('observer_activity_logs').insert({
         "observer_id": st.session_state.auth['user_id'],
         "child_id": "N/A",
@@ -573,8 +745,11 @@ def main():
     # Sidebar for user information
     with st.sidebar:
         st.subheader("Session Information")
-        st.session_state.user_info['student_name'] = st.text_input("Student Name:", value=st.session_state.user_info['student_name'])
-        st.session_state.user_info['observer_name'] = st.text_input("Observer Name:", value=st.session_state.user_info['observer_name'])
+        st.session_state.user_info['student_name'] = st.text_input("Student Name:",
+                                                                   value=st.session_state.user_info['student_name'])
+        st.session_state.user_info['observer_name'] = st.text_input("Observer Name:", value=st.session_state.user_info[
+                                                                                                'observer_name'] or st.session_state.auth.get(
+            'name', ''))
         st.session_state.user_info['session_date'] = st.date_input("Session Date:").strftime('%d/%m/%Y')
         col1, col2 = st.columns(2)
         with col1:
@@ -632,7 +807,8 @@ def main():
     # Audio Processing
     elif st.session_state.processing_mode == "audio":
         st.info("Audio Mode: Upload an audio recording of an observation session")
-        uploaded_file = st.file_uploader("Choose an audio file", type=["wav", "mp3", "m4a", "mpeg", "ogg", "flac", "aac", "wma", "aiff"])
+        uploaded_file = st.file_uploader("Choose an audio file",
+                                         type=["wav", "mp3", "m4a", "mpeg", "ogg", "flac", "aac", "wma", "aiff"])
         if uploaded_file and st.button("Process & Generate Report"):
             if not assemblyai_key:
                 st.error("AssemblyAI API key is missing.")
@@ -686,11 +862,16 @@ def main():
         st.subheader("Email Report")
         with st.form("email_form"):
             to_email = st.text_input("Recipient Email", value="parent@example.com")
-            subject = st.text_input("Subject", value=f"Observer Report for {st.session_state.user_info['student_name']}")
+            subject = st.text_input("Subject",
+                                    value=f"Observer Report for {st.session_state.user_info['student_name']}")
             submitted = st.form_submit_button("Send Email")
             if submitted:
-                send_email(to_email, subject, st.session_state.report_generated)
-                st.success("Email sent successfully!")
+                success, message = extractor.send_email(to_email, subject, st.session_state.report_generated)
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
+
 
 if __name__ == "__main__":
     main()
