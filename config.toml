@@ -1,0 +1,7 @@
+[browser]
+serverAddress = "localhost"
+serverPort = 8501
+gatherUsageStats = false
+
+[theme]
+base = "light"
