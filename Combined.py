@@ -449,7 +449,7 @@ def admin_dashboard():
                         st.write(f"Child ID: {mapping['child_id']}")
                     with col3:
                         if st.button("Delete", key=f"delete_{mapping['id']}"):
-                            supabase.table('observer_child_mappings').delete().eq('id', mapping['id']}).execute()
+                            supabase.table('observer_child_mappings').delete().eq('id', mapping['id']).execute()
                             st.success("Mapping deleted successfully!")
                             st.rerun()
             else:
