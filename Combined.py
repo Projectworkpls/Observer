@@ -26,14 +26,12 @@ st.set_page_config(
     page_icon="📝"
 )
 
-
 # Initialize Supabase client
 @st.cache_resource
 def init_supabase():
     SUPABASE_URL = st.secrets.get("SUPABASE_URL")
     SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
-
 
 supabase = init_supabase()
 
@@ -42,7 +40,6 @@ genai.configure(api_key=st.secrets.get("GOOGLE_API_KEY"))
 
 # Set up AssemblyAI API key
 assemblyai_key = st.secrets.get("ASSEMBLYAI_API_KEY", "")
-
 
 class ObservationExtractor:
     def __init__(self):
@@ -402,9 +399,6 @@ Be creative in extracting information based on context."""
         finally:
             server.quit()
 
-    # Add after the ObservationExtractor class (around line 417)
-
-
 def create_google_oauth_flow():
     """Initialize the OAuth flow for Google authentication"""
     client_config = {
@@ -426,7 +420,6 @@ def create_google_oauth_flow():
     )
     return flow
 
-
 def get_google_user_info(credentials):
     """Fetch user information from Google using authenticated credentials"""
     response = requests.get(
@@ -436,7 +429,6 @@ def get_google_user_info(credentials):
     if response.status_code == 200:
         return response.json()
     return None
-
 
 def admin_dashboard():
     st.title("Admin Dashboard")
@@ -457,7 +449,7 @@ def admin_dashboard():
                         st.write(f"Child ID: {mapping['child_id']}")
                     with col3:
                         if st.button("Delete", key=f"delete_{mapping['id']}"):
-                            supabase.table('observer_child_mappings').delete().eq('id', mapping['id']).execute()
+                            supabase.table('observer_child_mappings').delete().eq('id', mapping['id']}).execute()
                             st.success("Mapping deleted successfully!")
                             st.rerun()
             else:
@@ -491,15 +483,14 @@ def admin_dashboard():
     with tabs[2]:
         st.subheader("User Management")
         try:
-            users = supabase.table('observations').select("username").execute().data
+            users = supabase.table('users').select("*").execute().data
             if users:
-                st.write("Registered Observers:")
-                st.write(list({u['username'] for u in users}))
+                st.write("Registered Users:")
+                st.dataframe(users)
             else:
                 st.info("No users found")
         except Exception as e:
             st.error(f"Database error: {str(e)}")
-
 
 # Parent Dashboard
 def parent_dashboard(child_id):
@@ -538,8 +529,6 @@ def parent_dashboard(child_id):
     except Exception as e:
         st.error(f"Database error: {str(e)}")
 
-
-# Main App
 # Main App
 def main():
     extractor = ObservationExtractor()
@@ -570,15 +559,8 @@ def main():
         st.session_state.show_edit_transcript = False
     if 'processing_mode' not in st.session_state:
         st.session_state.processing_mode = None
-    # Add new flag for admin initial login
     if 'admin_initial_login' not in st.session_state:
         st.session_state.admin_initial_login = True
-
-    # Admin credentials
-    ADMIN_CREDS = {
-        "username": st.secrets.get("ADMIN_USER", "admin"),
-        "password": st.secrets.get("ADMIN_PASS", "hello")
-    }
 
     # Check for OAuth callback
     query_params = st.experimental_get_query_params()
@@ -633,56 +615,40 @@ def main():
             st.error(f"Authentication error: {str(e)}")
             st.experimental_set_query_params()
 
-    # Login Page
+    # Login Page - Only Google Login now
     if not st.session_state.auth['logged_in']:
         st.title("Learning Observer Login")
-
-        # Regular login form
-        with st.form("login"):
-            role = st.selectbox("Role", ["Observer", "Parent", "Admin"])
-            user_id = st.text_input("ID/Username")
-            password = st.text_input("Password", type="password")
-            if st.form_submit_button("Login"):
-                if role == "Admin":
-                    if user_id == ADMIN_CREDS["username"] and password == ADMIN_CREDS["password"]:
-                        st.session_state.auth = {'logged_in': True, 'role': 'Admin', 'user_id': 'admin'}
-                        st.session_state.admin_initial_login = True  # Set to True on initial login
-                        st.rerun()
-                else:
-                    st.session_state.auth = {'logged_in': True, 'role': role, 'user_id': user_id}
-                    st.rerun()
-
-        # Add Google Login button
-        st.write("──────── OR ────────")
-        if st.button("Sign in with Google"):
-            flow = create_google_oauth_flow()
-            auth_url, _ = flow.authorization_url(
-                access_type='offline',
-                include_granted_scopes='true',
-                prompt='consent'
-            )
-            st.markdown(f"""
-                <a href="{auth_url}" target="_self">
-                    <button style="
-                        background-color: #4285F4;
-                        color: white;
-                        padding: 10px 20px;
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-size: 16px;
-                        display: flex;
-                        align-items: center;
-                        width: 100%;
-                        justify-content: center;
-                    ">
-                        <img src="https://developers.google.com/identity/images/g-logo.png" 
-                             style="height: 24px; margin-right: 10px;">
-                        Sign in with Google
-                    </button>
-                </a>
-            """, unsafe_allow_html=True)
-
+        
+        st.write("Please sign in with your Google account to continue:")
+        
+        # Google Login button
+        flow = create_google_oauth_flow()
+        auth_url, _ = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            prompt='consent'
+        )
+        st.markdown(f"""
+            <a href="{auth_url}" target="_self">
+                <button style="
+                    background-color: #4285F4;
+                    color: white;
+                    padding: 10px 20px;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 16px;
+                    display: flex;
+                    align-items: center;
+                    width: 100%;
+                    justify-content: center;
+                ">
+                    <img src="https://developers.google.com/identity/images/g-logo.png" 
+                         style="height: 24px; margin-right: 10px;">
+                    Sign in with Google
+                </button>
+            </a>
+        """, unsafe_allow_html=True)
         return
 
     # Logout Button (common)
@@ -698,11 +664,11 @@ def main():
             st.session_state.auth = {'logged_in': False, 'role': None, 'user_id': None}
             st.rerun()
 
-    # Admin Dashboard - Modified to check for initial login
+    # Admin Dashboard
     if st.session_state.auth['role'] == 'Admin':
         if st.session_state.admin_initial_login:
             # Show a welcome or intermediate page instead of the full admin dashboard
-            st.title("Welcome, Admin")
+            st.title(f"Welcome, {st.session_state.auth['name']}")
             st.write("You are logged in as an administrator.")
 
             # Add a button to proceed to the dashboard
@@ -725,14 +691,15 @@ def main():
         return
 
     # Observer Dashboard
-    st.title(f"Observer Dashboard - ID: {st.session_state.auth['user_id']}")
+    st.title(f"Observer Dashboard - Welcome {st.session_state.auth['name']}")
 
-    # Display user info if logged in via Google
+    # Display user info
     if st.session_state.auth.get('email'):
         st.sidebar.write(f"Logged in as: {st.session_state.auth['name']}")
         if st.session_state.auth.get('picture'):
             st.sidebar.image(st.session_state.auth['picture'], width=50)
 
+    # Log the login activity
     supabase.table('observer_activity_logs').insert({
         "observer_id": st.session_state.auth['user_id'],
         "child_id": "N/A",
@@ -747,9 +714,8 @@ def main():
         st.subheader("Session Information")
         st.session_state.user_info['student_name'] = st.text_input("Student Name:",
                                                                    value=st.session_state.user_info['student_name'])
-        st.session_state.user_info['observer_name'] = st.text_input("Observer Name:", value=st.session_state.user_info[
-                                                                                                'observer_name'] or st.session_state.auth.get(
-            'name', ''))
+        st.session_state.user_info['observer_name'] = st.text_input("Observer Name:", 
+                                                                   value=st.session_state.auth.get('name', ''))
         st.session_state.user_info['session_date'] = st.date_input("Session Date:").strftime('%d/%m/%Y')
         col1, col2 = st.columns(2)
         with col1:
@@ -871,7 +837,6 @@ def main():
                     st.success(message)
                 else:
                     st.error(message)
-
 
 if __name__ == "__main__":
     main()
