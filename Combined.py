@@ -13,11 +13,14 @@ import io
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from google_auth_oauthlib.flow import Flow
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
 import os
 import pathlib
+import uuid
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Set page config
 st.set_page_config(
@@ -27,12 +30,33 @@ st.set_page_config(
 )
 
 
-# Initialize Supabase client
+# Initialize Supabase client with enhanced error handling
 @st.cache_resource
 def init_supabase():
-    SUPABASE_URL = st.secrets.get("SUPABASE_URL")
-    SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        SUPABASE_URL = st.secrets.get("SUPABASE_URL")
+        SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
+
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise ValueError("Supabase URL or KEY not found in secrets")
+
+        client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+        # Test connection
+        try:
+            test = client.table('users').select("count", count="exact").execute()
+            logger.info(f"Supabase connected successfully. Found {test.count} users.")
+        except Exception as test_error:
+            logger.error(f"Supabase connection test failed: {str(test_error)}")
+            st.error("Failed to connect to database. Please check your connection settings.")
+            raise
+
+        return client
+
+    except Exception as e:
+        logger.error(f"Supabase initialization failed: {str(e)}")
+        st.error("Database initialization failed. Please check your configuration.")
+        raise
 
 
 supabase = init_supabase()
@@ -402,41 +426,6 @@ Be creative in extracting information based on context."""
         finally:
             server.quit()
 
-    # Add after the ObservationExtractor class (around line 417)
-
-
-def create_google_oauth_flow():
-    """Initialize the OAuth flow for Google authentication"""
-    client_config = {
-        "web": {
-            "client_id": st.secrets.get("GOOGLE_CLIENT_ID"),
-            "client_secret": st.secrets.get("GOOGLE_CLIENT_SECRET"),
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [st.secrets.get("GOOGLE_REDIRECT_URI")],
-        }
-    }
-
-    flow = Flow.from_client_config(
-        client_config,
-        scopes=["https://www.googleapis.com/auth/userinfo.email",
-                "https://www.googleapis.com/auth/userinfo.profile",
-                "openid"],
-        redirect_uri=st.secrets.get("GOOGLE_REDIRECT_URI")
-    )
-    return flow
-
-
-def get_google_user_info(credentials):
-    """Fetch user information from Google using authenticated credentials"""
-    response = requests.get(
-        "https://www.googleapis.com/oauth2/v2/userinfo",
-        headers={"Authorization": f"Bearer {credentials.token}"}
-    )
-    if response.status_code == 200:
-        return response.json()
-    return None
-
 
 def admin_dashboard():
     st.title("Admin Dashboard")
@@ -491,10 +480,19 @@ def admin_dashboard():
     with tabs[2]:
         st.subheader("User Management")
         try:
-            users = supabase.table('observations').select("username").execute().data
+            users = supabase.table('users').select("*").execute().data
             if users:
-                st.write("Registered Observers:")
-                st.write(list({u['username'] for u in users}))
+                st.write("Registered Users:")
+                for user in users:
+                    col1, col2, col3 = st.columns([3, 2, 1])
+                    with col1:
+                        st.write(f"Name: {user.get('name', 'N/A')} ({user['email']})")
+                    with col2:
+                        st.write(f"Role: {user['role']}")
+                    with col3:
+                        if st.button("Delete", key=f"delete_{user['id']}"):
+                            supabase.table('users').delete().eq('id', user['id']).execute()
+                            st.rerun()
             else:
                 st.info("No users found")
         except Exception as e:
@@ -502,18 +500,30 @@ def admin_dashboard():
 
 
 # Parent Dashboard
-def parent_dashboard(child_id):
-    st.title(f"Parent Portal - Child ID: {child_id}")
+def parent_dashboard(user_id):
+    st.title(f"Parent Portal")
 
     try:
+        # Get the child ID for this parent
+        parent_data = supabase.table('users').select("child_id").eq("id", user_id).execute().data
+        if not parent_data or not parent_data[0].get('child_id'):
+            st.warning("No child assigned to your account. Please contact admin.")
+            return
+
+        child_id = parent_data[0]['child_id']
+
         # Get observer ID
         mapping = supabase.table('observer_child_mappings').select("observer_id").eq("child_id",
                                                                                      child_id).execute().data
         if not mapping:
-            st.warning("No observer assigned")
+            st.warning("No observer assigned to your child")
             return
 
         observer_id = mapping[0]['observer_id']
+
+        # Get observer name
+        observer_data = supabase.table('users').select("name").eq("id", observer_id).execute().data
+        observer_name = observer_data[0]['name'] if observer_data else observer_id
 
         # Get activity logs
         logs = supabase.table('observer_activity_logs').select("*").eq("child_id", child_id).execute().data
@@ -525,21 +535,45 @@ def parent_dashboard(child_id):
 
         # Display info
         cols = st.columns(3)
-        cols[0].metric("Assigned Observer", observer_id)
+        cols[0].metric("Assigned Observer", observer_name)
         cols[1].metric("Total Logins", total_logins)
         cols[2].metric("Total Observation Time (mins)", total_time)
 
-        st.subheader("Recent Activity")
-        if logs:
-            st.dataframe(logs[-10:])
+        st.subheader("Recent Reports")
+        reports = supabase.table('observations').select("*").eq("student_id", child_id).execute().data
+        if reports:
+            for report in reports:
+                with st.expander(f"Report from {report.get('date', 'unknown date')}"):
+                    st.write(f"**Student:** {report.get('student_name', 'N/A')}")
+                    st.write(f"**Date:** {report.get('date', 'N/A')}")
+                    st.write(f"**Observations:**")
+                    st.write(report.get('observations', 'No observations recorded'))
+
+                    # Display strengths, areas of development, and recommendations if available
+                    if report.get('strengths'):
+                        st.write("**Strengths:**")
+                        strengths = json.loads(report['strengths'])
+                        for strength in strengths:
+                            st.write(f"- {strength}")
+
+                    if report.get('areas_of_development'):
+                        st.write("**Areas for Development:**")
+                        areas = json.loads(report['areas_of_development'])
+                        for area in areas:
+                            st.write(f"- {area}")
+
+                    if report.get('recommendations'):
+                        st.write("**Recommendations:**")
+                        recs = json.loads(report['recommendations'])
+                        for rec in recs:
+                            st.write(f"- {rec}")
         else:
-            st.info("No recent activity")
+            st.info("No reports available yet")
 
     except Exception as e:
         st.error(f"Database error: {str(e)}")
 
 
-# Main App
 # Main App
 def main():
     extractor = ObservationExtractor()
@@ -551,8 +585,7 @@ def main():
             'role': None,
             'user_id': None,
             'email': None,
-            'name': None,
-            'picture': None
+            'name': None
         }
     if 'user_info' not in st.session_state:
         st.session_state.user_info = {
@@ -570,7 +603,8 @@ def main():
         st.session_state.show_edit_transcript = False
     if 'processing_mode' not in st.session_state:
         st.session_state.processing_mode = None
-    # Add new flag for admin initial login
+    if 'show_register' not in st.session_state:
+        st.session_state.show_register = False
     if 'admin_initial_login' not in st.session_state:
         st.session_state.admin_initial_login = True
 
@@ -580,108 +614,113 @@ def main():
         "password": st.secrets.get("ADMIN_PASS", "hello")
     }
 
-    # Check for OAuth callback
-    query_params = st.experimental_get_query_params()
-    if "code" in query_params:
-        try:
-            code = query_params["code"][0]
-
-            # Exchange code for credentials
-            flow = create_google_oauth_flow()
-            flow.fetch_token(code=code)
-            credentials = flow.credentials
-
-            # Get user info
-            user_info = get_google_user_info(credentials)
-
-            if user_info:
-                # Check if user exists in database or assign a default role
-                email = user_info.get("email")
-
-                # Query Supabase to see if this email exists and what role they have
-                user_data = supabase.table('users').select("*").eq("email", email).execute().data
-
-                if user_data:
-                    role = user_data[0]['role']
-                    user_id = user_data[0]['id']
-                else:
-                    # Create new user with default role
-                    response = supabase.table('users').insert({
-                        "email": email,
-                        "name": user_info.get("name"),
-                        "role": "Observer",  # Default role
-                        "picture": user_info.get("picture")
-                    }).execute()
-                    user_id = response.data[0]['id']
-                    role = "Observer"
-
-                # Update session state
-                st.session_state.auth = {
-                    'logged_in': True,
-                    'role': role,
-                    'user_id': user_id,
-                    'email': email,
-                    'name': user_info.get("name"),
-                    'picture': user_info.get("picture")
-                }
-
-                # Clear the URL parameters
-                st.experimental_set_query_params()
-                st.rerun()
-
-        except Exception as e:
-            st.error(f"Authentication error: {str(e)}")
-            st.experimental_set_query_params()
-
-    # Login Page
+    # Login/Registration Page
     if not st.session_state.auth['logged_in']:
         st.title("Learning Observer Login")
 
-        # Regular login form
-        with st.form("login"):
-            role = st.selectbox("Role", ["Observer", "Parent", "Admin"])
-            user_id = st.text_input("ID/Username")
-            password = st.text_input("Password", type="password")
-            if st.form_submit_button("Login"):
-                if role == "Admin":
-                    if user_id == ADMIN_CREDS["username"] and password == ADMIN_CREDS["password"]:
-                        st.session_state.auth = {'logged_in': True, 'role': 'Admin', 'user_id': 'admin'}
-                        st.session_state.admin_initial_login = True  # Set to True on initial login
-                        st.rerun()
-                else:
-                    st.session_state.auth = {'logged_in': True, 'role': role, 'user_id': user_id}
-                    st.rerun()
+        if st.session_state.show_register:
+            # Registration Form with improved validation
+            with st.form("register_form"):
+                st.subheader("Create New Account")
+                name = st.text_input("Full Name", max_chars=100)
+                email = st.text_input("Email", max_chars=100).strip().lower()
+                role = st.selectbox("Role", ["Observer", "Parent"])
+                password = st.text_input("Password", type="password", max_chars=100)
+                confirm_password = st.text_input("Confirm Password", type="password", max_chars=100)
 
-        # Add Google Login button
-        st.write("──────── OR ────────")
-        if st.button("Sign in with Google"):
-            flow = create_google_oauth_flow()
-            auth_url, _ = flow.authorization_url(
-                access_type='offline',
-                include_granted_scopes='true',
-                prompt='consent'
-            )
-            st.markdown(f"""
-                <a href="{auth_url}" target="_self">
-                    <button style="
-                        background-color: #4285F4;
-                        color: white;
-                        padding: 10px 20px;
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-size: 16px;
-                        display: flex;
-                        align-items: center;
-                        width: 100%;
-                        justify-content: center;
-                    ">
-                        <img src="https://developers.google.com/identity/images/g-logo.png" 
-                             style="height: 24px; margin-right: 10px;">
-                        Sign in with Google
-                    </button>
-                </a>
-            """, unsafe_allow_html=True)
+                child_id = None
+                if role == "Parent":
+                    child_id = st.text_input("Child ID (provided by your observer)", max_chars=50)
+
+                submitted = st.form_submit_button("Register")
+
+                if submitted:
+                    if not all([name, email, password, confirm_password]):
+                        st.error("Please fill in all required fields")
+                    elif password != confirm_password:
+                        st.error("Passwords do not match!")
+                    elif len(password) < 8:
+                        st.error("Password must be at least 8 characters")
+                    else:
+                        try:
+                            # Check if email exists
+                            existing_response = supabase.table('users').select("email").eq("email", email).execute()
+
+                            if existing_response.data:
+                                st.error("Email already registered. Please login instead.")
+                            else:
+                                # Prepare user data with explicit column names
+                                user_data = {
+                                    "id": str(uuid.uuid4()),
+                                    "email": email,
+                                    "name": name,
+                                    "password": password,  # Note: In production, hash this password!
+                                    "role": role
+                                }
+
+                                if role == "Parent" and child_id:
+                                    user_data["child_id"] = child_id.strip()
+
+                                # Insert with error handling
+                                insert_response = supabase.table('users').insert(user_data).execute()
+
+                                if insert_response.data:
+                                    st.success("Registration successful! Please login.")
+                                    st.session_state.show_register = False
+                                else:
+                                    st.error("Registration failed. Please try again.")
+
+                        except Exception as e:
+                            logger.error(f"Registration error: {str(e)}")
+                            st.error(f"Registration failed: {str(e)}")
+
+            if st.button("Back to Login"):
+                st.session_state.show_register = False
+        else:
+            # Login Form with improved error handling
+            with st.form("login_form"):
+                email = st.text_input("Email", max_chars=100).strip().lower()
+                password = st.text_input("Password", type="password", max_chars=100)
+
+                submitted = st.form_submit_button("Login")
+
+                if submitted:
+                    try:
+                        # Check admin login first
+                        if email == ADMIN_CREDS["username"] and password == ADMIN_CREDS["password"]:
+                            st.session_state.auth = {
+                                'logged_in': True,
+                                'role': 'Admin',
+                                'user_id': 'admin',
+                                'email': email,
+                                'name': 'Admin'
+                            }
+                            st.rerun()
+
+                        # Check regular user login
+                        user_response = supabase.table('users').select("*").eq("email", email).eq("password",
+                                                                                                  password).execute()
+
+                        if user_response.data:
+                            user = user_response.data[0]
+                            st.session_state.auth = {
+                                'logged_in': True,
+                                'role': user['role'],
+                                'user_id': user['id'],
+                                'email': user['email'],
+                                'name': user.get('name', 'User')
+                            }
+                            st.rerun()
+                        else:
+                            st.error("Invalid email or password")
+
+                    except Exception as e:
+                        logger.error(f"Login error: {str(e)}")
+                        st.error(f"Login failed: {str(e)}")
+
+            st.write("Don't have an account?")
+            if st.button("Register Here"):
+                st.session_state.show_register = True
 
         return
 
@@ -725,14 +764,9 @@ def main():
         return
 
     # Observer Dashboard
-    st.title(f"Observer Dashboard - ID: {st.session_state.auth['user_id']}")
+    st.title(f"Observer Dashboard - {st.session_state.auth['name']}")
 
-    # Display user info if logged in via Google
-    if st.session_state.auth.get('email'):
-        st.sidebar.write(f"Logged in as: {st.session_state.auth['name']}")
-        if st.session_state.auth.get('picture'):
-            st.sidebar.image(st.session_state.auth['picture'], width=50)
-
+    # Log login activity
     supabase.table('observer_activity_logs').insert({
         "observer_id": st.session_state.auth['user_id'],
         "child_id": "N/A",
@@ -747,9 +781,10 @@ def main():
         st.subheader("Session Information")
         st.session_state.user_info['student_name'] = st.text_input("Student Name:",
                                                                    value=st.session_state.user_info['student_name'])
-        st.session_state.user_info['observer_name'] = st.text_input("Observer Name:", value=st.session_state.user_info[
-                                                                                                'observer_name'] or st.session_state.auth.get(
-            'name', ''))
+        st.session_state.user_info['observer_name'] = st.text_input("Observer Name:",
+                                                                    value=st.session_state.user_info[
+                                                                              'observer_name'] or st.session_state.auth.get(
+                                                                        'name', ''))
         st.session_state.user_info['session_date'] = st.date_input("Session Date:").strftime('%d/%m/%Y')
         col1, col2 = st.columns(2)
         with col1:
@@ -784,10 +819,20 @@ def main():
                     if observations_text:
                         report = extractor.generate_report_from_text(observations_text, st.session_state.user_info)
                         st.session_state.report_generated = report
+
+                        # Get child ID from mappings if available
+                        child_id = structured_data.get("studentId", "")
+                        if not child_id:
+                            # Try to find child by name
+                            child_data = supabase.table('users').select("id").ilike("name",
+                                                                                    f"%{structured_data.get('studentName', '')}%").execute().data
+                            if child_data:
+                                child_id = child_data[0]['id']
+
                         supabase.table('observations').insert({
                             "username": st.session_state.auth['user_id'],
                             "student_name": structured_data.get("studentName", ""),
-                            "student_id": structured_data.get("studentId", ""),
+                            "student_id": child_id,
                             "class_name": structured_data.get("className", ""),
                             "date": structured_data.get("date", ""),
                             "observations": observations_text,
