@@ -17,6 +17,11 @@ import os
 import pathlib
 import uuid
 import logging
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import calendar
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -404,6 +409,9 @@ Be creative in extracting information based on context."""
         sender_email = "parth.workforai@gmail.com"
         sender_password = st.secrets.get("EMAIL_PASSWORD")  # Add this to your secrets.toml
 
+        if not sender_password:
+            return False, "Email password not configured in secrets"
+
         smtp_server = "smtp.gmail.com"
         smtp_port = 587
 
@@ -423,27 +431,429 @@ Be creative in extracting information based on context."""
             return False, "Error: Authentication failed. Check your email and password."
         except smtplib.SMTPException as e:
             return False, f"Error: Failed to send email. {e}"
+        except Exception as e:
+            return False, f"Error: {str(e)}"
         finally:
-            server.quit()
+            try:
+                server.quit()
+            except:
+                pass
+
+
+class MonthlyReportGenerator:
+    def __init__(self, supabase_client):
+        self.supabase = supabase_client
+
+    def get_month_data(self, child_id, year, month):
+        """Fetch all observations for a specific child in a given month"""
+        # Convert month/year to date range
+        start_date = f"{year}-{month:02d}-01"
+        if month == 12:
+            end_date = f"{year + 1}-01-01"
+        else:
+            end_date = f"{year}-{month + 1:02d}-01"
+
+        try:
+            # Query observations table for the specified date range
+            response = self.supabase.table('observations').select("*") \
+                .eq("student_id", child_id) \
+                .gte("date", start_date) \
+                .lt("date", end_date) \
+                .execute()
+
+            return response.data
+        except Exception as e:
+            st.error(f"Error fetching monthly data: {str(e)}")
+            return []
+
+    def get_goal_progress(self, child_id, year, month):
+        """Get goal progress data for the specified month"""
+        # Convert month/year to date range
+        start_date = f"{year}-{month:02d}-01"
+        if month == 12:
+            end_date = f"{year + 1}-01-01"
+        else:
+            end_date = f"{year}-{month + 1:02d}-01"
+
+        try:
+            # Get goals for this child
+            goals_response = self.supabase.table('goals').select("*") \
+                .eq("child_id", child_id) \
+                .execute()
+
+            goals = goals_response.data
+
+            # Get alignments for these goals within the time period
+            goal_progress = []
+
+            for goal in goals:
+                # Get alignments for this goal
+                alignments_response = self.supabase.table('goal_alignments').select("*") \
+                    .eq("goal_id", goal['id']) \
+                    .execute()
+
+                alignments = alignments_response.data
+
+                # Filter alignments by report date
+                relevant_alignments = []
+                for alignment in alignments:
+                    report_response = self.supabase.table('observations').select("date") \
+                        .eq("id", alignment['report_id']) \
+                        .execute()
+
+                    if report_response.data:
+                        report_date = report_response.data[0]['date']
+                        if start_date <= report_date < end_date:
+                            relevant_alignments.append(alignment)
+
+                # Calculate progress metrics
+                if relevant_alignments:
+                    avg_score = sum(a['alignment_score'] for a in relevant_alignments) / len(relevant_alignments)
+                    progress_trend = [a['alignment_score'] for a in relevant_alignments]
+
+                    goal_progress.append({
+                        'goal_text': goal['goal_text'],
+                        'avg_score': avg_score,
+                        'progress_trend': progress_trend,
+                        'num_observations': len(relevant_alignments)
+                    })
+
+            return goal_progress
+        except Exception as e:
+            st.error(f"Error fetching goal progress: {str(e)}")
+            return []
+
+    def get_strength_areas(self, observations):
+        """Extract and count strength areas from observations"""
+        strength_counts = {}
+
+        for obs in observations:
+            if obs.get('strengths'):
+                try:
+                    strengths = json.loads(obs['strengths']) if isinstance(obs['strengths'], str) else obs['strengths']
+                    for strength in strengths:
+                        strength_counts[strength] = strength_counts.get(strength, 0) + 1
+                except:
+                    pass
+
+        # Sort by frequency
+        return dict(sorted(strength_counts.items(), key=lambda x: x[1], reverse=True))
+
+    def get_development_areas(self, observations):
+        """Extract and count development areas from observations"""
+        development_counts = {}
+
+        for obs in observations:
+            if obs.get('areas_of_development'):
+                try:
+                    areas = json.loads(obs['areas_of_development']) if isinstance(obs['areas_of_development'], str) else \
+                    obs['areas_of_development']
+                    for area in areas:
+                        development_counts[area] = development_counts.get(area, 0) + 1
+                except:
+                    pass
+
+        # Sort by frequency
+        return dict(sorted(development_counts.items(), key=lambda x: x[1], reverse=True))
+
+    def generate_observation_frequency_chart(self, observations):
+        """Generate a chart showing the frequency of observations by date"""
+        # Extract dates and count observations per date
+        date_counts = {}
+
+        for obs in observations:
+            date = obs.get('date', '')
+            if date:
+                date_counts[date] = date_counts.get(date, 0) + 1
+
+        if not date_counts:
+            return None
+
+        # Create dataframe for plotting
+        df = pd.DataFrame([
+            {"date": date, "count": count}
+            for date, count in date_counts.items()
+        ])
+
+        # Sort by date
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date')
+
+        # Create the figure
+        fig = px.bar(
+            df,
+            x='date',
+            y='count',
+            title='Observation Frequency by Date',
+            labels={'date': 'Date', 'count': 'Number of Observations'}
+        )
+
+        return fig
+
+    def generate_strengths_chart(self, strength_counts):
+        """Generate a chart showing the frequency of different strengths"""
+        if not strength_counts:
+            return None
+
+        # Take top 10 strengths
+        top_strengths = dict(list(strength_counts.items())[:10])
+
+        # Create dataframe for plotting
+        df = pd.DataFrame([
+            {"strength": strength, "count": count}
+            for strength, count in top_strengths.items()
+        ])
+
+        # Create the figure
+        fig = px.bar(
+            df,
+            x='count',
+            y='strength',
+            title='Top Strengths Observed',
+            labels={'strength': 'Strength', 'count': 'Frequency'},
+            orientation='h'
+        )
+
+        return fig
+
+    def generate_development_areas_chart(self, development_counts):
+        """Generate a chart showing the frequency of different development areas"""
+        if not development_counts:
+            return None
+
+        # Take top 10 development areas
+        top_areas = dict(list(development_counts.items())[:10])
+
+        # Create dataframe for plotting
+        df = pd.DataFrame([
+            {"area": area, "count": count}
+            for area, count in top_areas.items()
+        ])
+
+        # Create the figure
+        fig = px.bar(
+            df,
+            x='count',
+            y='area',
+            title='Areas for Development',
+            labels={'area': 'Development Area', 'count': 'Frequency'},
+            orientation='h'
+        )
+
+        return fig
+
+    def generate_goal_progress_chart(self, goal_progress):
+        """Generate a chart showing progress on goals"""
+        if not goal_progress:
+            return None
+
+        # Create figure with subplots
+        fig = make_subplots(rows=len(goal_progress), cols=1,
+                            subplot_titles=[g['goal_text'][:50] + '...' for g in goal_progress],
+                            vertical_spacing=0.1)
+
+        for i, goal in enumerate(goal_progress):
+            # Add bar for average score
+            fig.add_trace(
+                go.Bar(
+                    x=[goal['avg_score']],
+                    y=['Average Score'],
+                    orientation='h',
+                    name=f"Goal {i + 1}",
+                    showlegend=False
+                ),
+                row=i + 1, col=1
+            )
+
+            # Add a reference line for goal target (10)
+            fig.add_shape(
+                type="line",
+                x0=10, y0=-0.5,
+                x1=10, y1=0.5,
+                line=dict(color="green", width=2, dash="dash"),
+                row=i + 1, col=1
+            )
+
+        # Update layout
+        fig.update_layout(
+            title_text="Goal Progress",
+            height=200 * len(goal_progress),
+            margin=dict(l=0, r=0, t=50, b=0)
+        )
+
+        return fig
+
+    def generate_monthly_summary(self, observations, goal_progress):
+        """Generate a text summary of the monthly progress"""
+        if not observations:
+            return "No observations recorded this month."
+
+        num_observations = len(observations)
+        num_goals_with_progress = len(goal_progress)
+
+        # Calculate overall progress
+        if goal_progress:
+            avg_goal_score = sum(g['avg_score'] for g in goal_progress) / len(goal_progress)
+            highest_goal = max(goal_progress, key=lambda x: x['avg_score'])
+            lowest_goal = min(goal_progress, key=lambda x: x['avg_score'])
+        else:
+            avg_goal_score = 0
+            highest_goal = None
+            lowest_goal = None
+
+        # Create summary
+        summary = f"""
+        ### Monthly Progress Summary
+
+        **Total Observations:** {num_observations}
+
+        **Goals Tracked:** {num_goals_with_progress}
+
+        **Average Goal Progress:** {avg_goal_score:.1f}/10
+        """
+
+        if highest_goal:
+            summary += f"""
+            **Strongest Goal Area:** {highest_goal['goal_text'][:50]}... (Score: {highest_goal['avg_score']:.1f}/10)
+
+            **Goal Needing Most Support:** {lowest_goal['goal_text'][:50]}... (Score: {lowest_goal['avg_score']:.1f}/10)
+            """
+
+        return summary
 
 
 def admin_dashboard():
     st.title("Admin Dashboard")
 
-    tabs = st.tabs(["Mappings", "Activity", "Users"])
+    tabs = st.tabs(["User Management", "Parent-Child Mappings", "Observer-Child Mappings", "Activity Logs"])
 
-    with tabs[0]:
+    with tabs[0]:  # User Management
+        st.subheader("User Management")
+        try:
+            users = supabase.table('users').select("*").execute().data
+            if users:
+                st.write("Registered Users:")
+                for user in users:
+                    with st.expander(f"{user.get('name', 'N/A')} ({user['email']}) - {user['role']}"):
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            # Display user details
+                            st.write(f"ID: {user['id']}")
+                            st.write(f"Role: {user['role']}")
+                            st.write(f"Created: {user.get('created_at', 'N/A')}")
+
+                            # Special fields based on role
+                            if user['role'] == 'Parent':
+                                child_id = user.get('child_id')
+                                if child_id:
+                                    child = supabase.table('children').select("*").eq('id', child_id).execute().data
+                                    if child:
+                                        st.write(f"Assigned Child: {child[0].get('id', child_id)}")
+                                    else:
+                                        st.write(f"Assigned Child ID: {child_id} (not found)")
+                                else:
+                                    st.write("No child assigned")
+
+                        with col2:
+                            if st.button("Delete", key=f"delete_{user['id']}"):
+                                supabase.table('users').delete().eq('id', user['id']).execute()
+                                st.rerun()
+            else:
+                st.info("No users found")
+        except Exception as e:
+            st.error(f"Database error: {str(e)}")
+
+    with tabs[1]:  # Parent-Child Mappings
+        st.subheader("Parent-Child Relationships")
+
+        # Add new mapping
+        with st.expander("Add New Parent-Child Relationship"):
+            with st.form("add_parent_child"):
+                # Get all parents
+                parents = supabase.table('users').select("*").eq('role', 'Parent').execute().data
+                parent_options = {p['id']: f"{p.get('name', 'N/A')} ({p['email']})" for p in parents}
+
+                # Get all children
+                children = supabase.table('children').select("*").execute().data
+                child_options = {c['id']: c.get('name', 'N/A') for c in children}
+
+                parent_id = st.selectbox("Select Parent", options=list(parent_options.keys()),
+                                         format_func=lambda x: parent_options[x])
+
+                if children:
+                    child_id = st.selectbox("Select Child", options=list(child_options.keys()),
+                                            format_func=lambda x: child_options[x])
+                else:
+                    st.warning("No children found in database. Please add children first.")
+                    child_id = None
+
+                if st.form_submit_button("Assign") and children:
+                    if parent_id and child_id:
+                        # Update the parent's record with child_id
+                        supabase.table('users').update({'child_id': child_id}).eq('id', parent_id).execute()
+                        st.success("Relationship assigned successfully!")
+                        st.rerun()
+
+        # Add a section to create new children
+        with st.expander("Add New Child"):
+            with st.form("add_child_form"):
+                child_name = st.text_input("Child Name")
+                birth_date = st.date_input("Birth Date")
+                grade = st.text_input("Grade/Class")
+
+                if st.form_submit_button("Add Child"):
+                    if child_name:
+                        child_data = {
+                            "name": child_name,
+                            "birth_date": birth_date.isoformat() if birth_date else None,
+                            "grade": grade or None
+                        }
+                        supabase.table('children').insert(child_data).execute()
+                        st.success("Child added successfully!")
+                        st.rerun()
+
+        # View current mappings
+        st.subheader("Current Parent-Child Assignments")
+        try:
+            parents = supabase.table('users').select("*").eq('role', 'Parent').execute().data
+            if parents:
+                for parent in parents:
+                    if parent.get('child_id'):
+                        child = supabase.table('children').select("*").eq('id', parent['child_id']).execute().data
+                        child_name = child[0].get('name', 'N/A') if child else "Unknown Child"
+
+                        col1, col2, col3 = st.columns([4, 3, 1])
+                        with col1:
+                            st.write(f"Parent: {parent.get('name', 'N/A')} ({parent['email']})")
+                        with col2:
+                            st.write(f"Child: {child_name}")
+                        with col3:
+                            if st.button("Remove", key=f"remove_{parent['id']}"):
+                                supabase.table('users').update({'child_id': None}).eq('id', parent['id']).execute()
+                                st.rerun()
+            else:
+                st.info("No parent-child relationships found")
+        except Exception as e:
+            st.error(f"Database error: {str(e)}")
+
+    with tabs[2]:  # Observer-Child Mappings
         st.subheader("Observer-Child Mappings")
         try:
             mappings = supabase.table('observer_child_mappings').select("*").execute().data
             if mappings:
-                # Add a column for delete action buttons
-                for i, mapping in enumerate(mappings):
-                    col1, col2, col3 = st.columns([3, 3, 1])
+                for mapping in mappings:
+                    # Get observer and child names
+                    observer = supabase.table('users').select("*").eq('id', mapping['observer_id']).execute().data
+                    child = supabase.table('children').select("*").eq('id', mapping['child_id']).execute().data
+
+                    observer_name = observer[0].get('name', 'N/A') if observer else mapping['observer_id']
+                    child_name = child[0].get('name', 'N/A') if child else mapping['child_id']
+
+                    col1, col2, col3 = st.columns([4, 3, 1])
                     with col1:
-                        st.write(f"Observer ID: {mapping['observer_id']}")
+                        st.write(f"Observer: {observer_name}")
                     with col2:
-                        st.write(f"Child ID: {mapping['child_id']}")
+                        st.write(f"Child: {child_name}")
                     with col3:
                         if st.button("Delete", key=f"delete_{mapping['id']}"):
                             supabase.table('observer_child_mappings').delete().eq('id', mapping['id']).execute()
@@ -452,49 +862,41 @@ def admin_dashboard():
             else:
                 st.info("No mappings found")
 
-            with st.expander("Add New Mapping"):
-                with st.form("add_mapping"):
-                    obs_id = st.text_input("Observer ID")
-                    child_id = st.text_input("Child ID")
-                    if st.form_submit_button("Add"):
-                        if obs_id and child_id:
+            with st.expander("Add New Observer-Child Mapping"):
+                with st.form("add_observer_child"):
+                    # Get all observers
+                    observers = supabase.table('users').select("*").eq('role', 'Observer').execute().data
+                    observer_options = {o['id']: f"{o.get('name', 'N/A')} ({o['email']})" for o in observers}
+
+                    # Get all children
+                    children = supabase.table('children').select("*").execute().data
+                    child_options = {c['id']: c.get('name', 'N/A') for c in children}
+
+                    observer_id = st.selectbox("Select Observer", options=list(observer_options.keys()),
+                                               format_func=lambda x: observer_options[x])
+                    child_id = st.selectbox("Select Child", options=list(child_options.keys()),
+                                            format_func=lambda x: child_options[x])
+
+                    if st.form_submit_button("Assign"):
+                        if observer_id and child_id:
                             supabase.table('observer_child_mappings').insert({
-                                "observer_id": obs_id,
+                                "observer_id": observer_id,
                                 "child_id": child_id
                             }).execute()
+                            st.success("Mapping created successfully!")
                             st.rerun()
         except Exception as e:
             st.error(f"Database error: {str(e)}")
 
-    with tabs[1]:
+    with tabs[3]:  # Activity Logs
         st.subheader("Activity Logs")
         try:
-            logs = supabase.table('observer_activity_logs').select("*").execute().data
+            logs = supabase.table('observer_activity_logs').select("*").order('timestamp', desc=True).limit(
+                100).execute().data
             if logs:
                 st.dataframe(logs)
             else:
                 st.info("No activity logs")
-        except Exception as e:
-            st.error(f"Database error: {str(e)}")
-
-    with tabs[2]:
-        st.subheader("User Management")
-        try:
-            users = supabase.table('users').select("*").execute().data
-            if users:
-                st.write("Registered Users:")
-                for user in users:
-                    col1, col2, col3 = st.columns([3, 2, 1])
-                    with col1:
-                        st.write(f"Name: {user.get('name', 'N/A')} ({user['email']})")
-                    with col2:
-                        st.write(f"Role: {user['role']}")
-                    with col3:
-                        if st.button("Delete", key=f"delete_{user['id']}"):
-                            supabase.table('users').delete().eq('id', user['id']).execute()
-                            st.rerun()
-            else:
-                st.info("No users found")
         except Exception as e:
             st.error(f"Database error: {str(e)}")
 
@@ -504,79 +906,462 @@ def parent_dashboard(user_id):
     st.title(f"Parent Portal")
 
     try:
-        # Get the child ID for this parent
-        parent_data = supabase.table('users').select("child_id").eq("id", user_id).execute().data
-        if not parent_data or not parent_data[0].get('child_id'):
+        # Get the parent's information
+        parent_data = supabase.table('users').select("*").eq("id", user_id).execute().data
+        if not parent_data:
+            st.warning("User not found")
+            return
+
+        parent = parent_data[0]
+        child_id = parent.get('child_id')
+
+        if not child_id:
             st.warning("No child assigned to your account. Please contact admin.")
             return
 
-        child_id = parent_data[0]['child_id']
-
-        # Get observer ID
-        mapping = supabase.table('observer_child_mappings').select("observer_id").eq("child_id",
-                                                                                     child_id).execute().data
-        if not mapping:
-            st.warning("No observer assigned to your child")
+        # Get child information
+        child_data = supabase.table('children').select("*").eq("id", child_id).execute().data
+        if not child_data:
+            st.warning("Child information not found")
             return
 
-        observer_id = mapping[0]['observer_id']
+        child = child_data[0]
 
-        # Get observer name
-        observer_data = supabase.table('users').select("name").eq("id", observer_id).execute().data
-        observer_name = observer_data[0]['name'] if observer_data else observer_id
+        # Get observer information
+        mapping = supabase.table('observer_child_mappings').select("*").eq("child_id", child_id).execute().data
+        observer_id = mapping[0]['observer_id'] if mapping else None
+        observer_name = "Not assigned"
 
-        # Get activity logs
-        logs = supabase.table('observer_activity_logs').select("*").eq("child_id", child_id).execute().data
+        if observer_id:
+            observer_data = supabase.table('users').select("name").eq("id", observer_id).execute().data
+            if observer_data:
+                observer_name = observer_data[0].get('name', observer_id)
 
-        # Calculate metrics
-        total_logins = len([log for log in logs if log['action'] == 'login'])
-        total_time = sum(log.get('duration_minutes', 0) for log in logs)
-        reports_submitted = len([log for log in logs if log.get('report_id')])
+        # Display dashboard
+        st.subheader(f"Your Child: {child.get('name', 'N/A')}")
 
-        # Display info
         cols = st.columns(3)
-        cols[0].metric("Assigned Observer", observer_name)
-        cols[1].metric("Total Logins", total_logins)
-        cols[2].metric("Total Observation Time (mins)", total_time)
+        cols[0].metric("Age", child.get('age', 'N/A'))
+        cols[1].metric("Grade/Class", child.get('grade', 'N/A'))
+        cols[2].metric("Assigned Observer", observer_name)
 
         st.subheader("Recent Reports")
-        reports = supabase.table('observations').select("*").eq("student_id", child_id).execute().data
+        reports = supabase.table('observations').select("*").eq("student_id", child_id).order('date', desc=True).limit(
+            5).execute().data
+
         if reports:
             for report in reports:
                 with st.expander(f"Report from {report.get('date', 'unknown date')}"):
-                    st.write(f"**Student:** {report.get('student_name', 'N/A')}")
+                    st.write(f"**Observer:** {report.get('observer_name', 'N/A')}")
                     st.write(f"**Date:** {report.get('date', 'N/A')}")
-                    st.write(f"**Observations:**")
-                    st.write(report.get('observations', 'No observations recorded'))
 
-                    # Display strengths, areas of development, and recommendations if available
+                    if report.get('observations'):
+                        st.write("**Observations:**")
+                        st.write(report['observations'])
+
                     if report.get('strengths'):
-                        st.write("**Strengths:**")
-                        strengths = json.loads(report['strengths'])
-                        for strength in strengths:
-                            st.write(f"- {strength}")
+                        try:
+                            strengths = json.loads(report['strengths']) if isinstance(report['strengths'], str) else \
+                                report['strengths']
+                            st.write("**Strengths:**")
+                            for strength in strengths:
+                                st.write(f"- {strength}")
+                        except:
+                            pass
 
                     if report.get('areas_of_development'):
-                        st.write("**Areas for Development:**")
-                        areas = json.loads(report['areas_of_development'])
-                        for area in areas:
-                            st.write(f"- {area}")
+                        try:
+                            areas = json.loads(report['areas_of_development']) if isinstance(
+                                report['areas_of_development'], str) else report['areas_of_development']
+                            st.write("**Areas for Development:**")
+                            for area in areas:
+                                st.write(f"- {area}")
+                        except:
+                            pass
 
                     if report.get('recommendations'):
-                        st.write("**Recommendations:**")
-                        recs = json.loads(report['recommendations'])
-                        for rec in recs:
-                            st.write(f"- {rec}")
+                        try:
+                            recs = json.loads(report['recommendations']) if isinstance(report['recommendations'],
+                                                                                       str) else report[
+                                'recommendations']
+                            st.write("**Recommendations:**")
+                            for rec in recs:
+                                st.write(f"- {rec}")
+                        except:
+                            pass
         else:
             st.info("No reports available yet")
+
+        st.markdown("---")
+        monthly_report_section(child_id, user_id)
+        st.markdown("---")
+        st.subheader("Goal Tracking")
+        if child_id:
+            goals = supabase.table('goals').select("*").eq("child_id", child_id).execute().data
+
+            if goals:
+                for goal in goals:
+                    with st.expander(f"Goal from {goal.get('created_at', 'unknown date')}"):
+                        st.write(goal['goal_text'])
+                        st.write(f"Status: {goal.get('status', 'active')}")
+                        st.write(f"Target Date: {goal.get('target_date', 'No target date')}")
+
+                        # Show alignments with reports
+                        alignments = supabase.table('goal_alignments').select("*").eq("goal_id",
+                                                                                      goal['id']).execute().data
+                        if alignments:
+                            st.write("**Report Alignments:**")
+                            for alignment in alignments:
+                                report = supabase.table('observations').select("date").eq("id", alignment[
+                                    'report_id']).execute().data
+                                report_date = report[0]['date'] if report else "Unknown date"
+                                st.write(f"- {report_date}: Score {alignment.get('alignment_score', 0)}/10")
+
+                                # Feedback form if no feedback exists for this alignment
+                                existing_feedback = supabase.table('parent_feedback').select("*").eq("alignment_id",
+                                                                                                     alignment[
+                                                                                                         'id']).eq(
+                                    "parent_id", user_id).execute().data
+
+                                if not existing_feedback:
+                                    with st.form(f"feedback_form_{alignment['id']}"):
+                                        rating = st.slider("Rate this alignment", 1, 5, 3,
+                                                           key=f"rating_{alignment['id']}")
+                                        feedback_text = st.text_area("Your feedback", key=f"feedback_{alignment['id']}")
+
+                                        if st.form_submit_button("Submit Feedback"):
+                                            feedback_data = {
+                                                "alignment_id": alignment['id'],
+                                                "parent_id": user_id,
+                                                "feedback_text": feedback_text,
+                                                "rating": rating
+                                            }
+                                            supabase.table('parent_feedback').insert(feedback_data).execute()
+                                            st.success("Feedback submitted!")
+                                            st.rerun()
+                                else:
+                                    fb = existing_feedback[0]
+                                    st.write(f"**Your Feedback:** {'⭐' * fb.get('rating', 0)}")
+                                    st.write(fb.get('feedback_text', 'No feedback text'))
+            else:
+                st.info("No goals set for your child yet")
 
     except Exception as e:
         st.error(f"Database error: {str(e)}")
 
 
+def monthly_report_section(child_id, parent_id):
+    """Display monthly report section for parents"""
+    st.subheader("Monthly Progress Reports")
+
+    # Initialize the report generator
+    report_generator = MonthlyReportGenerator(supabase)
+
+    # Get child's info
+    child_data = supabase.table('children').select("*").eq("id", child_id).execute().data
+    if not child_data:
+        st.warning("Child information not found")
+        return
+
+    child = child_data[0]
+
+    # Date selection
+    col1, col2 = st.columns(2)
+    with col1:
+        # Get the current year and month
+        current_date = datetime.now()
+        year = st.selectbox("Year",
+                            options=list(range(current_date.year - 2, current_date.year + 1)),
+                            index=2)  # Default to current year
+    with col2:
+        month = st.selectbox("Month",
+                             options=list(range(1, 13)),
+                             format_func=lambda x: calendar.month_name[x],
+                             index=current_date.month - 1)  # Default to current month
+
+    # Get all observations for this child in the selected month
+    observations = report_generator.get_month_data(child_id, year, month)
+
+    if not observations:
+        st.info(f"No observations found for {calendar.month_name[month]} {year}")
+        return
+
+    # Get goal progress for this month
+    goal_progress = report_generator.get_goal_progress(child_id, year, month)
+
+    # Display monthly summary
+    summary = report_generator.generate_monthly_summary(observations, goal_progress)
+    st.markdown(summary)
+
+    # Display observation frequency chart
+    obs_freq_chart = report_generator.generate_observation_frequency_chart(observations)
+    if obs_freq_chart:
+        st.plotly_chart(obs_freq_chart, use_container_width=True)
+
+    # Extract strengths and development areas
+    strength_counts = report_generator.get_strength_areas(observations)
+    development_counts = report_generator.get_development_areas(observations)
+
+    # Display strengths and development areas
+    col1, col2 = st.columns(2)
+
+    with col1:
+        strengths_chart = report_generator.generate_strengths_chart(strength_counts)
+        if strengths_chart:
+            st.plotly_chart(strengths_chart, use_container_width=True)
+        else:
+            st.info("No strengths data available")
+
+    with col2:
+        development_chart = report_generator.generate_development_areas_chart(development_counts)
+        if development_chart:
+            st.plotly_chart(development_chart, use_container_width=True)
+        else:
+            st.info("No development areas data available")
+
+    # Display goal progress
+    if goal_progress:
+        goal_chart = report_generator.generate_goal_progress_chart(goal_progress)
+        if goal_chart:
+            st.plotly_chart(goal_chart, use_container_width=True)
+    else:
+        st.info("No goal progress data available for this month")
+
+    # Add download option for report
+    if st.button("Generate Downloadable Report"):
+        # Create DataFrame with main metrics
+        report_data = {
+            "Metric": ["Total Observations", "Goals Tracked", "Average Goal Score"],
+            "Value": [len(observations), len(goal_progress),
+                      sum(g['avg_score'] for g in goal_progress) / len(goal_progress) if goal_progress else 0]
+        }
+
+        df = pd.DataFrame(report_data)
+
+        # Create Excel buffer
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df.to_excel(writer, sheet_name='Summary', index=False)
+
+            # Add strengths sheet
+            if strength_counts:
+                strengths_df = pd.DataFrame([
+                    {"Strength": strength, "Count": count}
+                    for strength, count in strength_counts.items()
+                ])
+                strengths_df.to_excel(writer, sheet_name='Strengths', index=False)
+
+            # Add development areas sheet
+            if development_counts:
+                development_df = pd.DataFrame([
+                    {"Development Area": area, "Count": count}
+                    for area, count in development_counts.items()
+                ])
+                development_df.to_excel(writer, sheet_name='Development Areas', index=False)
+
+            # Add goal progress sheet
+            if goal_progress:
+                goals_df = pd.DataFrame([
+                    {"Goal": g['goal_text'], "Average Score": g['avg_score'], "Observations": g['num_observations']}
+                    for g in goal_progress
+                ])
+                goals_df.to_excel(writer, sheet_name='Goal Progress', index=False)
+
+        buffer.seek(0)
+
+        # Create download button
+        month_name = calendar.month_name[month]
+        st.download_button(
+            label="Download Excel Report",
+            data=buffer,
+            file_name=f"{child['name']}_Progress_Report_{month_name}_{year}.xlsx",
+            mime="application/vnd.ms-excel"
+        )
+
+
+def observer_monthly_report_section(observer_id):
+    """Display monthly report section for observers"""
+    st.subheader("Monthly Progress Reports")
+
+    # Initialize the report generator
+    report_generator = MonthlyReportGenerator(supabase)
+
+    # Get all children assigned to this observer
+    mappings = supabase.table('observer_child_mappings').select("child_id").eq("observer_id",
+                                                                               observer_id).execute().data
+    child_ids = [m['child_id'] for m in mappings]
+
+    if not child_ids:
+        st.warning("No children assigned to you yet")
+        return
+
+    # Get child details
+    children = supabase.table('children').select("*").in_("id", child_ids).execute().data
+    child_options = {c['id']: c.get('name', f"Child {c['id'][:4]}") for c in children}
+
+    # Select child
+    selected_child_id = st.selectbox(
+        "Select Child",
+        options=list(child_options.keys()),
+        format_func=lambda x: child_options[x]
+    )
+
+    # Date selection
+    col1, col2 = st.columns(2)
+    with col1:
+        # Get the current year and month
+        current_date = datetime.now()
+        year = st.selectbox("Year",
+                            options=list(range(current_date.year - 2, current_date.year + 1)),
+                            index=2)  # Default to current year
+    with col2:
+        month = st.selectbox("Month",
+                             options=list(range(1, 13)),
+                             format_func=lambda x: calendar.month_name[x],
+                             index=current_date.month - 1)  # Default to current month
+
+    # Get all observations for this child in the selected month
+    observations = report_generator.get_month_data(selected_child_id, year, month)
+
+    if not observations:
+        st.info(f"No observations found for {calendar.month_name[month]} {year}")
+        return
+
+    # Get goal progress for this month
+    goal_progress = report_generator.get_goal_progress(selected_child_id, year, month)
+
+    # Display monthly summary
+    summary = report_generator.generate_monthly_summary(observations, goal_progress)
+    st.markdown(summary)
+
+    # Display observation frequency chart
+    obs_freq_chart = report_generator.generate_observation_frequency_chart(observations)
+    if obs_freq_chart:
+        st.plotly_chart(obs_freq_chart, use_container_width=True)
+
+    # Extract strengths and development areas
+    strength_counts = report_generator.get_strength_areas(observations)
+    development_counts = report_generator.get_development_areas(observations)
+
+    # Display strengths and development areas
+    col1, col2 = st.columns(2)
+
+    with col1:
+        strengths_chart = report_generator.generate_strengths_chart(strength_counts)
+        if strengths_chart:
+            st.plotly_chart(strengths_chart, use_container_width=True)
+        else:
+            st.info("No strengths data available")
+
+    with col2:
+        development_chart = report_generator.generate_development_areas_chart(development_counts)
+        if development_chart:
+            st.plotly_chart(development_chart, use_container_width=True)
+        else:
+            st.info("No development areas data available")
+
+    # Display goal progress
+    if goal_progress:
+        goal_chart = report_generator.generate_goal_progress_chart(goal_progress)
+        if goal_chart:
+            st.plotly_chart(goal_chart, use_container_width=True)
+    else:
+        st.info("No goal progress data available for this month")
+
+    # Add option to share report with parents
+    if st.button("Share Report with Parent"):
+        try:
+            # Find parent associated with this child
+            parent = supabase.table('users').select("*").eq("child_id", selected_child_id).eq("role",
+                                                                                              "Parent").execute().data
+
+            if parent:
+                parent = parent[0]
+                parent_email = parent['email']
+
+                # Create email content
+                email_subject = f"Monthly Progress Report - {child_options[selected_child_id]} - {calendar.month_name[month]} {year}"
+                email_body = f"""
+                <h2>Monthly Progress Report</h2>
+                <p><strong>Child:</strong> {child_options[selected_child_id]}</p>
+                <p><strong>Period:</strong> {calendar.month_name[month]} {year}</p>
+                <p><strong>Observations:</strong> {len(observations)}</p>
+                <p><strong>Goals Tracked:</strong> {len(goal_progress)}</p>
+
+                <p>Please log in to the Learning Observer platform to view the full report with charts and details.</p>
+                """
+
+                # Send email
+                extractor = ObservationExtractor()  # Create an instance of the class to use the send_email method
+                success, message = extractor.send_email(parent_email, email_subject, email_body)
+
+                if success:
+                    st.success(f"Report shared successfully with {parent_email}")
+                else:
+                    st.error(f"Failed to share report: {message}")
+            else:
+                st.warning("No parent found for this child")
+        except Exception as e:
+            st.error(f"Error sharing report: {str(e)}")
+
+    # Add download option for report
+    if st.button("Download Report"):
+        # Create DataFrame with main metrics
+        report_data = {
+            "Metric": ["Total Observations", "Goals Tracked", "Average Goal Score"],
+            "Value": [len(observations), len(goal_progress),
+                      sum(g['avg_score'] for g in goal_progress) / len(goal_progress) if goal_progress else 0]
+        }
+
+        df = pd.DataFrame(report_data)
+
+        # Create Excel buffer
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df.to_excel(writer, sheet_name='Summary', index=False)
+
+            # Add strengths sheet
+            if strength_counts:
+                strengths_df = pd.DataFrame([
+                    {"Strength": strength, "Count": count}
+                    for strength, count in strength_counts.items()
+                ])
+                strengths_df.to_excel(writer, sheet_name='Strengths', index=False)
+
+            # Add development areas sheet
+            if development_counts:
+                development_df = pd.DataFrame([
+                    {"Development Area": area, "Count": count}
+                    for area, count in development_counts.items()
+                ])
+                development_df.to_excel(writer, sheet_name='Development Areas', index=False)
+
+            # Add goal progress sheet
+            if goal_progress:
+                goals_df = pd.DataFrame([
+                    {"Goal": g['goal_text'], "Average Score": g['avg_score'], "Observations": g['num_observations']}
+                    for g in goal_progress
+                ])
+                goals_df.to_excel(writer, sheet_name='Goal Progress', index=False)
+
+        buffer.seek(0)
+
+        # Create download button
+        month_name = calendar.month_name[month]
+        st.download_button(
+            label="Download Excel Report",
+            data=buffer,
+            file_name=f"{child_options[selected_child_id]}_Progress_Report_{month_name}_{year}.xlsx",
+            mime="application/vnd.ms-excel"
+        )
+
+
 # Main App
 def main():
     extractor = ObservationExtractor()
+
+    # Define AssemblyAI API key
+    assemblyai_key = st.secrets.get("ASSEMBLYAI_API_KEY", "")
 
     # Session State Initialization
     if 'auth' not in st.session_state:
@@ -628,9 +1413,12 @@ def main():
                 password = st.text_input("Password", type="password", max_chars=100)
                 confirm_password = st.text_input("Confirm Password", type="password", max_chars=100)
 
-                child_id = None
                 if role == "Parent":
-                    child_id = st.text_input("Child ID (provided by your observer)", max_chars=50)
+                    # For parents, show a dropdown of available children
+                    children = supabase.table('children').select("*").execute().data
+                    child_options = {c['id']: c.get('id', 'N/A') for c in children}
+                    child_id = st.selectbox("Select Your Child", options=list(child_options.keys()),
+                                            format_func=lambda x: child_options[x])
 
                 submitted = st.form_submit_button("Register")
 
@@ -658,8 +1446,8 @@ def main():
                                     "role": role
                                 }
 
-                                if role == "Parent" and child_id:
-                                    user_data["child_id"] = child_id.strip()
+                                if role == "Parent":
+                                    user_data["child_id"] = child_id
 
                                 # Insert with error handling
                                 insert_response = supabase.table('users').insert(user_data).execute()
@@ -775,6 +1563,118 @@ def main():
     }).execute()
 
     logout_button()
+    observer_tabs = st.tabs(["Observation Processing", "Goal Management", "Student Feedback", "Monthly Reports"])
+
+    with observer_tabs[0]:
+        # Your existing observation processing code goes here
+        pass
+
+    with observer_tabs[1]:
+        st.subheader("Goal Management")
+
+        # Get all children assigned to this observer
+        mappings = supabase.table('observer_child_mappings').select("child_id").eq("observer_id", st.session_state.auth[
+            'user_id']).execute().data
+        child_ids = [m['child_id'] for m in mappings]
+
+        if child_ids:
+            # Get child details
+            children = supabase.table('children').select("*").in_("id", child_ids).execute().data
+            child_options = {c['id']: c.get('name', f"Child {c['id'][:4]}") for c in children}
+
+            # Form to add new goal
+            with st.expander("Add New Goal"):
+                with st.form("add_goal"):
+                    selected_child = st.selectbox("Select Child", options=list(child_options.keys()),
+                                                  format_func=lambda x: child_options[x])
+                    goal_text = st.text_area("Goal Description", height=100)
+                    target_date = st.date_input("Target Date", min_value=datetime.now().date())
+
+                    if st.form_submit_button("Save Goal"):
+                        if goal_text.strip():
+                            goal_data = {
+                                "observer_id": st.session_state.auth['user_id'],
+                                "child_id": selected_child,
+                                "goal_text": goal_text,
+                                "target_date": target_date.isoformat()
+                            }
+                            supabase.table('goals').insert(goal_data).execute()
+                            st.success("Goal saved successfully!")
+                        else:
+                            st.error("Please enter a goal description")
+
+            # Display current goals
+            st.subheader("Current Goals")
+            goals = supabase.table('goals').select("*").eq("observer_id",
+                                                           st.session_state.auth['user_id']).execute().data
+
+            if goals:
+                for goal in goals:
+                    child_name = child_options.get(goal['child_id'], "Unknown Child")
+                    with st.expander(f"Goal for {child_name} (Due: {goal.get('target_date', 'No date')})"):
+                        st.write(goal['goal_text'])
+                        st.write(f"Status: {goal.get('status', 'active')}")
+
+                        # Display alignment scores if available
+                        alignments = supabase.table('goal_alignments').select("*").eq("goal_id",
+                                                                                      goal['id']).execute().data
+                        if alignments:
+                            st.write("**Alignment with Reports:**")
+                            for alignment in alignments:
+                                report = supabase.table('observations').select("date").eq("id", alignment[
+                                    'report_id']).execute().data
+                                report_date = report[0]['date'] if report else "Unknown date"
+                                st.write(f"- {report_date}: Score {alignment.get('alignment_score', 0)}/10")
+                                if alignment.get('analysis_text'):
+                                    with st.expander("Analysis Details"):
+                                        st.write(alignment['analysis_text'])
+
+                        # Option to mark as complete/delete
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("Mark Achieved", key=f"complete_{goal['id']}"):
+                                supabase.table('goals').update({"status": "achieved"}).eq("id", goal['id']).execute()
+                                st.rerun()
+                        with col2:
+                            if st.button("Delete", key=f"delete_{goal['id']}"):
+                                supabase.table('goals').delete().eq("id", goal['id']).execute()
+                                st.rerun()
+            else:
+                st.info("No goals set yet")
+        else:
+            st.warning("No children assigned to you yet")
+
+    with observer_tabs[3]:
+        observer_monthly_report_section(st.session_state.auth['user_id'])
+
+        # Get all children assigned to this observer
+        if child_ids:
+            # Get all feedback for reports related to this observer's children
+            feedback = supabase.table('parent_feedback').select("*").execute().data
+
+            if feedback:
+                for fb in feedback:
+                    # Get related information
+                    alignment = supabase.table('goal_alignments').select("*").eq("id",
+                                                                                 fb['alignment_id']).execute().data
+                    if alignment:
+                        alignment = alignment[0]
+                        goal = supabase.table('goals').select("*").eq("id", alignment['goal_id']).execute().data
+                        if goal:
+                            goal = goal[0]
+                            child = supabase.table('children').select("name").eq("id", goal['child_id']).execute().data
+                            child_name = child[0]['name'] if child else "Unknown Child"
+
+                            with st.expander(f"Feedback for {child_name}'s goal"):
+                                st.write(f"**Goal:** {goal['goal_text']}")
+                                st.write(f"**Alignment Score:** {alignment.get('alignment_score', 0)}/10")
+                                st.write(f"**Parent Rating:** {'⭐' * fb.get('rating', 0)}")
+                                st.write(f"**Parent Feedback:**")
+                                st.write(fb.get('feedback_text', 'No feedback text'))
+            else:
+                st.info("No feedback received yet")
+        else:
+            st.warning("No children assigned to you yet")
 
     # Sidebar for user information
     with st.sidebar:
@@ -816,6 +1716,8 @@ def main():
                     extracted_text = extractor.extract_text_with_ocr(uploaded_file)
                     structured_data = extractor.process_with_groq(extracted_text)
                     observations_text = structured_data.get("observations", "")
+                    child_id = None  # Initialize child_id variable
+
                     if observations_text:
                         report = extractor.generate_report_from_text(observations_text, st.session_state.user_info)
                         st.session_state.report_generated = report
@@ -829,7 +1731,8 @@ def main():
                             if child_data:
                                 child_id = child_data[0]['id']
 
-                        supabase.table('observations').insert({
+                        # Insert observation and capture the returned ID
+                        observation_response = supabase.table('observations').insert({
                             "username": st.session_state.auth['user_id'],
                             "student_name": structured_data.get("studentName", ""),
                             "student_id": child_id,
@@ -843,7 +1746,74 @@ def main():
                             "filename": uploaded_file.name,
                             "full_data": json.dumps(structured_data)
                         }).execute()
+
+                        # Get the observation ID for goal alignment
+                        observation_id = observation_response.data[0]['id'] if observation_response.data else None
+
                         st.success("Data processed and saved successfully!")
+
+                        # Analyze alignment with goals if we have a child ID and observation ID
+                        if child_id and observation_id:
+                            goals = supabase.table('goals').select("*").eq("child_id", child_id).eq("status",
+                                                                                                    "active").execute().data
+
+                            if goals:
+                                for goal in goals:
+                                    # Use Groq API to analyze alignment
+                                    alignment_prompt = f"""
+                                    Analyze how well this observation report aligns with the following learning goal:
+
+                                    GOAL: {goal['goal_text']}
+
+                                    OBSERVATION REPORT:
+                                    {observations_text}
+
+                                    Provide your analysis in JSON format with:
+                                    - alignment_score (0-10 scale)
+                                    - analysis_text (detailed explanation of alignment)
+                                    - suggested_next_steps
+                                    """
+
+                                    try:
+                                        # Using Groq API for analysis
+                                        response = requests.post(
+                                            'https://api.groq.com/openai/v1/chat/completions',
+                                            headers={
+                                                'Authorization': f'Bearer {extractor.groq_api_key}',
+                                                'Content-Type': 'application/json'
+                                            },
+                                            json={
+                                                "model": "llama-3.3-70b-versatile",
+                                                "messages": [
+                                                    {
+                                                        "role": "system",
+                                                        "content": "You are an educational assessment AI that analyzes how well observation reports align with learning goals."
+                                                    },
+                                                    {
+                                                        "role": "user",
+                                                        "content": alignment_prompt
+                                                    }
+                                                ],
+                                                "temperature": 0.2,
+                                                "response_format": {"type": "json_object"}
+                                            }
+                                        )
+
+                                        response.raise_for_status()
+                                        data = response.json()
+                                        analysis = json.loads(data['choices'][0]['message']['content'])
+
+                                        # Save alignment analysis
+                                        alignment_data = {
+                                            "goal_id": goal['id'],
+                                            "report_id": observation_id,  # Use the actual observation ID
+                                            "alignment_score": analysis.get('alignment_score', 0),
+                                            "analysis_text": analysis.get('analysis_text', 'No analysis')
+                                        }
+                                        supabase.table('goal_alignments').insert(alignment_data).execute()
+
+                                    except Exception as e:
+                                        st.error(f"Goal alignment analysis failed: {str(e)}")
                     else:
                         st.error("No observations found in the extracted data")
                 except Exception as e:
