@@ -1076,8 +1076,7 @@ def parent_dashboard(user_id):
         cols[2].metric("Assigned Observer", observer_name)
 
         st.subheader("Recent Reports")
-        reports = supabase.table('observations').select("*").eq("student_id", child_id).order('date', desc=True).limit(
-            5).execute().data
+        reports = supabase.table('observations').select("*").eq("student_id", child_id).order('date', desc=True).execute().data
 
         if reports:
             for report in reports:
@@ -1384,9 +1383,10 @@ def observer_monthly_report_section(observer_id):
 
     # Select child
     selected_child_id = st.selectbox(
-        "Select Child",
+        "Select Student",
         options=list(child_options.keys()),
-        format_func=lambda x: child_options[x]
+        format_func=lambda x: child_options[x],
+        key="audio_child_select"
     )
 
     # Date selection
@@ -1893,6 +1893,19 @@ def main():
             st.session_state.report_generated = None
 
     # OCR Processing
+    # In OCR Processing Section (add before file upload)
+    mappings = supabase.table('observer_child_mappings').select("child_id").eq("observer_id", st.session_state.auth[
+        'user_id']).execute().data
+    child_ids = [m['child_id'] for m in mappings]
+    children = supabase.table('children').select("*").in_("id", child_ids).execute().data
+    child_options = {c['id']: c.get('name', f"Child {c['id'][:4]}") for c in children}
+
+    selected_child_id = st.selectbox(
+        "Select Student",
+        options=list(child_options.keys()),
+        format_func=lambda x: child_options[x],
+        key="ocr_child_select"
+    )
     if st.session_state.processing_mode == "ocr":
         st.info("OCR Mode: Upload an image of an observation sheet")
         uploaded_file = st.file_uploader("Upload Observation Sheet", type=["jpg", "jpeg", "png"])
@@ -1919,9 +1932,10 @@ def main():
 
                         # Insert observation and capture the returned ID
                         observation_response = supabase.table('observations').insert({
+                            "student_id": selected_child_id,
                             "username": st.session_state.auth['user_id'],
                             "student_name": structured_data.get("studentName", ""),
-                            "student_id": child_id,
+
                             "class_name": structured_data.get("className", ""),
                             "date": structured_data.get("date", ""),
                             "observations": observations_text,
@@ -2021,9 +2035,10 @@ def main():
                     report = extractor.generate_report_from_text(transcript, st.session_state.user_info)
                     st.session_state.report_generated = report
                     supabase.table('observations').insert({
+                        "student_id": selected_child_id,
                         "username": st.session_state.auth['user_id'],
                         "student_name": st.session_state.user_info['student_name'],
-                        "student_id": "",
+
                         "class_name": "",
                         "date": st.session_state.user_info['session_date'],
                         "observations": transcript,
