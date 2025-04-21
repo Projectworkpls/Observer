@@ -766,78 +766,208 @@ def admin_dashboard():
     with tabs[1]:  # Parent-Child Mappings
         st.subheader("Parent-Child Relationships")
 
-        # Add new mapping
-        with st.expander("Add New Parent-Child Relationship"):
-            with st.form("add_parent_child"):
-                # Get all parents
-                parents = supabase.table('users').select("*").eq('role', 'Parent').execute().data
-                parent_options = {p['id']: f"{p.get('name', 'N/A')} ({p['email']})" for p in parents}
+        # Add new section for bulk child upload
+        with st.expander("Bulk Add Children (CSV)"):
+            st.info(
+                "Upload a CSV file with one column 'name' for child names (optional columns: 'birth_date', 'grade')")
+            child_upload = st.file_uploader("Upload Children CSV", type=["csv"], key="child_upload")
 
-                # Get all children
-                children = supabase.table('children').select("*").execute().data
-                child_options = {c['id']: c.get('name', 'N/A') for c in children}
+            if child_upload:
+                try:
+                    df = pd.read_csv(child_upload)
 
-                parent_id = st.selectbox("Select Parent", options=list(parent_options.keys()),
-                                         format_func=lambda x: parent_options[x])
+                    if 'name' not in df.columns:
+                        st.error("CSV must contain a 'name' column")
+                    else:
+                        st.write("Preview of children to be added:")
+                        st.dataframe(df.head())
 
-                if children:
-                    child_id = st.selectbox("Select Child", options=list(child_options.keys()),
-                                            format_func=lambda x: child_options[x])
-                else:
-                    st.warning("No children found in database. Please add children first.")
-                    child_id = None
+                        if st.button("Add Children"):
+                            children_data = []
+                            for _, row in df.iterrows():
+                                child_data = {
+                                    "name": row['name'],
+                                    "birth_date": row.get('birth_date', None),
+                                    "grade": row.get('grade', None)
+                                }
+                                children_data.append(child_data)
 
-                if st.form_submit_button("Assign") and children:
-                    if parent_id and child_id:
-                        # Update the parent's record with child_id
-                        supabase.table('users').update({'child_id': child_id}).eq('id', parent_id).execute()
-                        st.success("Relationship assigned successfully!")
-                        st.rerun()
+                            # Insert in batches to avoid timeout
+                            batch_size = 50
+                            for i in range(0, len(children_data), batch_size):
+                                batch = children_data[i:i + batch_size]
+                                supabase.table('children').insert(batch).execute()
 
-        # Add a section to create new children
-        with st.expander("Add New Child"):
-            with st.form("add_child_form"):
-                child_name = st.text_input("Child Name")
-                birth_date = st.date_input("Birth Date")
-                grade = st.text_input("Grade/Class")
+                            st.success(f"Successfully added {len(children_data)} children!")
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"Error processing children CSV: {str(e)}")
 
-                if st.form_submit_button("Add Child"):
-                    if child_name:
-                        child_data = {
-                            "name": child_name,
-                            "birth_date": birth_date.isoformat() if birth_date else None,
-                            "grade": grade or None
-                        }
-                        supabase.table('children').insert(child_data).execute()
-                        st.success("Child added successfully!")
-                        st.rerun()
+        # Add new section for bulk parent upload
+        with st.expander("Bulk Add Parents (CSV)"):
+            st.info("Upload a CSV file with columns: 'name', 'email', 'password'")
+            parent_upload = st.file_uploader("Upload Parents CSV", type=["csv"], key="parent_upload")
 
-        # View current mappings
-        st.subheader("Current Parent-Child Assignments")
-        try:
-            parents = supabase.table('users').select("*").eq('role', 'Parent').execute().data
-            if parents:
-                for parent in parents:
-                    if parent.get('child_id'):
-                        child = supabase.table('children').select("*").eq('id', parent['child_id']).execute().data
-                        child_name = child[0].get('name', 'N/A') if child else "Unknown Child"
+            if parent_upload:
+                try:
+                    df = pd.read_csv(parent_upload)
 
-                        col1, col2, col3 = st.columns([4, 3, 1])
-                        with col1:
-                            st.write(f"Parent: {parent.get('name', 'N/A')} ({parent['email']})")
-                        with col2:
-                            st.write(f"Child: {child_name}")
-                        with col3:
-                            if st.button("Remove", key=f"remove_{parent['id']}"):
-                                supabase.table('users').update({'child_id': None}).eq('id', parent['id']).execute()
-                                st.rerun()
-            else:
-                st.info("No parent-child relationships found")
-        except Exception as e:
-            st.error(f"Database error: {str(e)}")
+                    if not all(col in df.columns for col in ['name', 'email', 'password']):
+                        st.error("CSV must contain 'name', 'email', and 'password' columns")
+                    else:
+                        st.write("Preview of parents to be added:")
+                        st.dataframe(df.head())
+
+                        if st.button("Add Parents"):
+                            parents_data = []
+                            for _, row in df.iterrows():
+                                parent_data = {
+                                    "id": str(uuid.uuid4()),
+                                    "name": row['name'],
+                                    "email": row['email'].strip().lower(),
+                                    "password": row['password'],  # Note: In production, hash passwords
+                                    "role": "Parent"
+                                }
+                                parents_data.append(parent_data)
+
+                            # Insert in batches
+                            batch_size = 50
+                            for i in range(0, len(parents_data), batch_size):
+                                batch = parents_data[i:i + batch_size]
+                                supabase.table('users').insert(batch).execute()
+
+                            st.success(f"Successfully added {len(parents_data)} parents!")
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"Error processing parents CSV: {str(e)}")
+
+        # Add new section for bulk parent-child mapping upload
+        with st.expander("Bulk Add Parent-Child Relationships (CSV)"):
+            st.info("Upload a CSV file with columns: 'parent_email' and 'child_name'")
+            mapping_upload = st.file_uploader("Upload Parent-Child CSV", type=["csv"], key="mapping_upload")
+
+            if mapping_upload:
+                try:
+                    df = pd.read_csv(mapping_upload)
+
+                    if not all(col in df.columns for col in ['parent_email', 'child_name']):
+                        st.error("CSV must contain 'parent_email' and 'child_name' columns")
+                    else:
+                        st.write("Preview of relationships to be added:")
+                        st.dataframe(df.head())
+
+                        if st.button("Add Parent-Child Relationships"):
+                            # Get all children and parents first
+                            children = supabase.table('children').select("*").execute().data
+                            parents = supabase.table('users').select("*").eq("role", "Parent").execute().data
+
+                            child_name_to_id = {c['name'].lower(): c['id'] for c in children}
+                            parent_email_to_id = {p['email'].lower(): p['id'] for p in parents}
+
+                            success_count = 0
+                            failed_rows = []
+
+                            for idx, row in df.iterrows():
+                                parent_email = row['parent_email'].strip().lower()
+                                child_name = row['child_name'].strip().lower()
+
+                                parent_id = parent_email_to_id.get(parent_email)
+                                child_id = child_name_to_id.get(child_name)
+
+                                if parent_id and child_id:
+                                    # Update parent record with child_id
+                                    supabase.table('users').update({'child_id': child_id}).eq('id', parent_id).execute()
+                                    success_count += 1
+                                else:
+                                    failed_rows.append({
+                                        "row": idx + 1,
+                                        "parent_email": parent_email,
+                                        "child_name": child_name,
+                                        "error": ""
+                                    })
+                                    if not parent_id:
+                                        failed_rows[-1]["error"] += "Parent not found. "
+                                    if not child_id:
+                                        failed_rows[-1]["error"] += "Child not found."
+
+                            st.success(f"Successfully mapped {success_count} relationships!")
+
+                            if failed_rows:
+                                st.warning(f"Failed to process {len(failed_rows)} rows:")
+                                st.dataframe(pd.DataFrame(failed_rows))
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"Error processing relationships CSV: {str(e)}")
+
+    # Add this to the admin_dashboard function, within the Observer-Child Mappings tab (tabs[2])
 
     with tabs[2]:  # Observer-Child Mappings
         st.subheader("Observer-Child Mappings")
+
+        # Add new section for CSV bulk upload
+        with st.expander("Bulk Upload Observer-Student Mappings (CSV)"):
+            st.info("Upload a CSV file with two columns: 'observer_id' and 'student_id'")
+            uploaded_file = st.file_uploader("Choose CSV file", type=["csv"])
+
+            if uploaded_file is not None:
+                try:
+                    # Read the CSV file
+                    df = pd.read_csv(uploaded_file)
+
+                    # Validate columns
+                    if not all(col in df.columns for col in ['observer_id', 'student_id']):
+                        st.error("CSV must contain 'observer_id' and 'student_id' columns")
+                    else:
+                        # Display preview
+                        st.write("Preview of uploaded data:")
+                        st.dataframe(df.head())
+
+                        if st.button("Process CSV and Create Mappings"):
+                            # Get all valid observers and students from database
+                            observers = supabase.table('users').select("id").eq("role", "Observer").execute().data
+                            valid_observer_ids = {o['id'] for o in observers}
+
+                            children = supabase.table('children').select("id").execute().data
+                            valid_child_ids = {c['id'] for c in children}
+
+                            # Validate each row
+                            valid_rows = []
+                            invalid_rows = []
+
+                            for idx, row in df.iterrows():
+                                observer_id = row['observer_id']
+                                child_id = row['student_id']
+
+                                if observer_id in valid_observer_ids and child_id in valid_child_ids:
+                                    valid_rows.append({
+                                        "observer_id": observer_id,
+                                        "child_id": child_id
+                                    })
+                                else:
+                                    invalid_rows.append({
+                                        "row": idx + 1,
+                                        "observer_id": observer_id,
+                                        "child_id": child_id,
+                                        "error": ""
+                                    })
+                                    if observer_id not in valid_observer_ids:
+                                        invalid_rows[-1]["error"] += "Invalid observer ID. "
+                                    if child_id not in valid_child_ids:
+                                        invalid_rows[-1]["error"] += "Invalid student ID."
+
+                            # Insert valid mappings
+                            if valid_rows:
+                                result = supabase.table('observer_child_mappings').insert(valid_rows).execute()
+                                st.success(f"Successfully added {len(valid_rows)} mappings!")
+
+                            # Show invalid rows if any
+                            if invalid_rows:
+                                st.warning(f"{len(invalid_rows)} rows could not be processed:")
+                                invalid_df = pd.DataFrame(invalid_rows)
+                                st.dataframe(invalid_df)
+                except Exception as e:
+                    st.error(f"Error processing CSV: {str(e)}")
+
         try:
             mappings = supabase.table('observer_child_mappings').select("*").execute().data
             if mappings:
@@ -1068,7 +1198,6 @@ def monthly_report_section(child_id, parent_id):
     # Date selection
     col1, col2 = st.columns(2)
     with col1:
-        # Get the current year and month
         current_date = datetime.now()
         year = st.selectbox("Year",
                             options=list(range(current_date.year - 2, current_date.year + 1)),
@@ -1078,6 +1207,14 @@ def monthly_report_section(child_id, parent_id):
                              options=list(range(1, 13)),
                              format_func=lambda x: calendar.month_name[x],
                              index=current_date.month - 1)  # Default to current month
+
+    # Check if report already exists
+    existing_report = supabase.table('monthly_reports').select("*") \
+        .eq("child_id", child_id) \
+        .eq("parent_id", parent_id) \
+        .eq("month", month) \
+        .eq("year", year) \
+        .execute().data
 
     # Get all observations for this child in the selected month
     observations = report_generator.get_month_data(child_id, year, month)
@@ -1126,6 +1263,52 @@ def monthly_report_section(child_id, parent_id):
             st.plotly_chart(goal_chart, use_container_width=True)
     else:
         st.info("No goal progress data available for this month")
+
+    # Prepare report data
+    report_data = {
+        "summary": summary,
+        "strength_counts": strength_counts,
+        "development_counts": development_counts,
+        "goal_progress": goal_progress,
+        "num_observations": len(observations)
+    }
+
+    # Save report if it doesn't exist
+    if not existing_report:
+        if st.button("Save Monthly Report"):
+            report_id = str(uuid.uuid4())
+            supabase.table('monthly_reports').insert({
+                "id": report_id,
+                "child_id": child_id,
+                "parent_id": parent_id,
+                "month": month,
+                "year": year,
+                "report_data": report_data
+            }).execute()
+            st.success("Monthly report saved successfully!")
+            st.rerun()
+    else:
+        report = existing_report[0]
+        st.success("Monthly report already generated for this period")
+
+        # Show feedback section if no feedback exists
+        if not report.get('feedback'):
+            with st.form("monthly_feedback"):
+                st.subheader("Provide Feedback")
+                feedback = st.text_area("Your feedback on this monthly report")
+                rating = st.slider("Rating (1-5)", 1, 5, 3)
+
+                if st.form_submit_button("Submit Feedback"):
+                    supabase.table('monthly_reports').update({
+                        "feedback": feedback,
+                        "feedback_submitted_at": datetime.now().isoformat()
+                    }).eq("id", report['id']).execute()
+                    st.success("Thank you for your feedback!")
+                    st.rerun()
+        else:
+            st.subheader("Your Feedback")
+            st.write(f"Rating: {'⭐' * report.get('rating', 0)}")
+            st.write(report['feedback'])
 
     # Add download option for report
     if st.button("Generate Downloadable Report"):
@@ -1644,33 +1827,36 @@ def main():
         else:
             st.warning("No children assigned to you yet")
 
-    with observer_tabs[3]:
+    with observer_tabs[3]:  # Monthly Reports tab
         observer_monthly_report_section(st.session_state.auth['user_id'])
 
+        # Add section to view parent feedback
+        st.subheader("Parent Feedback on Monthly Reports")
+
         # Get all children assigned to this observer
+        mappings = supabase.table('observer_child_mappings').select("child_id").eq("observer_id", st.session_state.auth[
+            'user_id']).execute().data
+        child_ids = [m['child_id'] for m in mappings]
+
         if child_ids:
-            # Get all feedback for reports related to this observer's children
-            feedback = supabase.table('parent_feedback').select("*").execute().data
+            # Get all monthly reports with feedback for these children
+            reports = supabase.table('monthly_reports').select("*") \
+                .in_("child_id", child_ids) \
+                .not_.is_("feedback", "null") \
+                .order("year", desc=True) \
+                .order("month", desc=True) \
+                .execute().data
 
-            if feedback:
-                for fb in feedback:
-                    # Get related information
-                    alignment = supabase.table('goal_alignments').select("*").eq("id",
-                                                                                 fb['alignment_id']).execute().data
-                    if alignment:
-                        alignment = alignment[0]
-                        goal = supabase.table('goals').select("*").eq("id", alignment['goal_id']).execute().data
-                        if goal:
-                            goal = goal[0]
-                            child = supabase.table('children').select("name").eq("id", goal['child_id']).execute().data
-                            child_name = child[0]['name'] if child else "Unknown Child"
+            if reports:
+                for report in reports:
+                    child = supabase.table('children').select("name").eq("id", report['child_id']).execute().data
+                    child_name = child[0]['name'] if child else "Unknown Child"
 
-                            with st.expander(f"Feedback for {child_name}'s goal"):
-                                st.write(f"**Goal:** {goal['goal_text']}")
-                                st.write(f"**Alignment Score:** {alignment.get('alignment_score', 0)}/10")
-                                st.write(f"**Parent Rating:** {'⭐' * fb.get('rating', 0)}")
-                                st.write(f"**Parent Feedback:**")
-                                st.write(fb.get('feedback_text', 'No feedback text'))
+                    with st.expander(
+                            f"Feedback for {child_name} - {calendar.month_name[report['month']]} {report['year']}"):
+                        st.write(f"**Rating:** {'⭐' * report.get('rating', 0)}")
+                        st.write(f"**Feedback:** {report['feedback']}")
+                        st.write(f"**Submitted on:** {report.get('feedback_submitted_at', 'Unknown date')}")
             else:
                 st.info("No feedback received yet")
         else:
