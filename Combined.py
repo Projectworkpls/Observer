@@ -66,6 +66,32 @@ def init_supabase():
 
 supabase = init_supabase()
 
+
+def upload_file_to_storage(file_data, file_name, file_type):
+    """Upload a file to Supabase Storage and return the URL"""
+    try:
+        # Create a unique file name to avoid collisions
+        unique_filename = f"{uuid.uuid4()}_{file_name}"
+
+        # Determine the appropriate bucket based on file type
+        bucket_name = "audio-files" if "audio" in file_type else "image-files"
+
+        # Upload the file to Supabase Storage
+        response = supabase.storage.from_(bucket_name).upload(
+            unique_filename,
+            file_data,
+            file_options={"content-type": file_type}
+        )
+
+        # Get the public URL for the file
+        file_url = supabase.storage.from_(bucket_name).get_public_url(unique_filename)
+
+        return file_url
+    except Exception as e:
+        st.error(f"Error uploading file to storage: {str(e)}")
+        return None
+
+
 # Configure Google AI API
 genai.configure(api_key=st.secrets.get("GOOGLE_API_KEY"))
 
@@ -143,7 +169,6 @@ class ObservationExtractor:
         try:
             # Original detailed prompt
             system_prompt = """You are an AI assistant for a learning observation system. Extract and structure information from the provided observation sheet text.
-
 The observation sheets typically have the following structure:
 - Title (usually "The Observer")
 - Student information (Name, Roll Number/ID)
@@ -281,52 +306,56 @@ Be creative in extracting information based on context."""
     def generate_report_from_text(self, text_content, user_info):
         """Generate a structured report from text using Google Gemini"""
         prompt = f"""
-        Based on this text from a student observation, create a detailed observer report following the Observer Report format.
+        Based on this text from a student observation, create a detailed observer report following the new Daily Growth Report format.
 
         TEXT CONTENT:
         {text_content}
 
         FORMAT REQUIREMENTS:
 
-        1. Daily Activities Overview - Extract and categorize the student's daily activities into:
-           - Morning activities
-           - Afternoon activities
-           - Evening activities
-           - Night activities (if mentioned)
+        🧾 Daily Growth Report Format for Parents
 
-        2. Learning Moments & Reflections - Identify:
-           - New skills or knowledge the student gained
-           - Interesting observations or experiences
-           - Any self-reflection shared
+        🧒 Child's Name: {user_info['student_name']}
+        📅 Date: [{user_info['session_date']}]
+        🎯 Theme of the Day: [Extract from text]
+        🌱 Curiosity Seed Explored: [Extract from text]
 
-        3. Thinking Process - Assess:
-           - Approach to new information (curious/skeptical/analytical/accepting)
-           - Logical thinking (strong/moderate/needs improvement)
-           - Problem-solving skills (effective/developing/needs guidance)
-           - Creativity and imagination (high/moderate/low)
-           - Decision-making style (confident/hesitant/experimental)
-           - Any unique perspectives or ideas
+        📊 Growth Metrics & Observations
+        Growth Area | Rating | Observation Summary
+        🧠 Intellectual | [✅ Excellent/✅ Good/⚠️ Fair/❌ Needs Work] | [Brief summary]
+        😊 Emotional | [✅ Excellent/✅ Good/⚠️ Fair/❌ Needs Work] | [Brief summary]
+        🤝 Social | [✅ Excellent/✅ Good/⚠️ Fair/❌ Needs Work] | [Brief summary]
+        🎨 Creativity | [✅ Excellent/✅ Good/⚠️ Fair/❌ Needs Work] | [Brief summary]
+        🏃 Physical | [✅ Excellent/✅ Good/⚠️ Fair/❌ Needs Work] | [Brief summary]
+        🧭 Character/Values | [✅ Excellent/✅ Good/⚠️ Fair/❌ Needs Work] | [Brief summary]
+        🚀 Planning/Independence | [✅ Excellent/✅ Good/⚠️ Fair/❌ Needs Work] | [Brief summary]
 
-        4. Communication Skills & Thought Clarity - Evaluate:
-           - Confidence level (low/medium/high)
-           - Clarity of thought (clear/slightly clear/confused)
-           - Participation & engagement (active/moderate/passive)
-           - Sequence of explanation (well-structured/partially structured/unstructured)
+        🌈 Curiosity Response Index: [1-10] / 10
+        [Brief explanation of child's engagement with the curiosity seed]
 
-        5. General Behavior & Awareness - Note:
-           - Behavior (polite/calm/energetic/distracted)
-           - General awareness (aware/partially aware/unaware)
+        🧠 Overall Growth Score:
+        [🔵 Balanced Growth/🟡 Moderate Growth/🔴 Limited Growth] – [X/7] Areas Active
+        [Brief recommendation]
 
-        6. Observer's Comments - Add any relevant observations
+        📣 Parent Note:
+        [Comprehensive summary for parents with actionable insights]
 
-        7. Summary for Parents - Write a brief paragraph summarizing the session
+        🟢 Legend:
+        ✅ Excellent: Clear growth with evidence
+        ⚠️ Fair: Some engagement, needs encouragement
+        ❌ Needs Work: Area not activated today
 
-        Use the exact section titles and format as above. For items that cannot be determined from the text, use "Not enough information" rather than making assumptions.
+        🔵 Overall Score:
+        🟢 Good (6-7 active areas)
+        🟡 Moderate (3-5 areas)
+        🔴 Needs Encouragement (1-2 areas)
+
+        Use the exact section titles, emojis and format as above. For items that cannot be determined from the text, make reasonable inferences based on the available information.
         """
 
         try:
             # Configure the model - using Gemini Pro for most comprehensive responses
-            model = genai.GenerativeModel('gemini-2.0-flash-002')
+            model = genai.GenerativeModel('gemini-2.0-flash')
 
             # Generate content with Gemini
             response = model.generate_content([
@@ -336,17 +365,7 @@ Be creative in extracting information based on context."""
             # Extract the content from the response
             report_content = response.text
 
-            # Add user information to the report
-            complete_report = f"""Date: {user_info['session_date']}
-    Student Name: {user_info['student_name']}
-    Observer Name: {user_info['observer_name']}
-    Session Duration: {user_info['session_start']} - {user_info['session_end']}
-
-    {report_content}
-
-    Name of Observer: {user_info['observer_name']}
-    """
-            return complete_report
+            return report_content
         except Exception as e:
             return f"Error generating report: {str(e)}"
 
@@ -355,43 +374,52 @@ Be creative in extracting information based on context."""
         doc = docx.Document()
 
         # Add title
-        title = doc.add_heading('The Observer Report', 0)
+        title = doc.add_heading('Daily Growth Report', 0)
 
         # Clean up markdown formatting
         report_content = report_content.replace('**', '')
 
         # Add report content, parsing the sections
         lines = report_content.split('\n')
-        section_pattern = re.compile(r'^\d+\.\s+(.+)')
-        subheading_pattern = re.compile(r'^\*\s*(.+):\*\s*(.+)')
-        list_item_pattern = re.compile(r'^\*\s+(.+)')
 
         for line in lines:
             line = line.strip()
             if not line:
                 continue
 
-            # Header information (Date, Name, etc.)
-            if line.startswith(('Date:', 'Student Name:', 'Observer Name:', 'Session Duration:', 'Name of Observer:')):
+            # Header information (Child's Name, Date, etc.)
+            if line.startswith(('🧒', '📅', '🎯', '🌱')):
                 p = doc.add_paragraph()
                 p.add_run(line).bold = True
 
-            # Section heading (e.g., "1. Daily Activities Overview")
-            elif section_match := section_pattern.match(line):
+            # Growth Metrics header
+            elif line.startswith('📊'):
                 doc.add_heading(line, level=1)
 
-            # Subheading with bold prefix (e.g., "* Morning activities: Woke up early")
-            elif subheading_match := subheading_pattern.match(line):
+            # Growth area rows
+            elif line.startswith(('🧠', '😊', '🤝', '🎨', '🏃', '🧭', '🚀')):
                 p = doc.add_paragraph()
-                prefix = subheading_match.group(1)
-                content = subheading_match.group(2)
-                p.add_run(f"{prefix}: ").bold = True
-                p.add_run(content)
+                p.add_run(line).bold = True
 
-            # List item
-            elif list_match := list_item_pattern.match(line):
-                content = list_match.group(1)
-                p = doc.add_paragraph(content, style='List Bullet')
+            # Curiosity Response Index
+            elif line.startswith('🌈'):
+                doc.add_heading(line, level=2)
+
+            # Overall Growth Score
+            elif line.startswith('🧠 Overall'):
+                doc.add_heading(line, level=2)
+
+            # Parent Note
+            elif line.startswith('📣'):
+                doc.add_heading(line, level=2)
+
+            # Legend
+            elif line.startswith('🟢 Legend'):
+                doc.add_heading(line, level=3)
+
+            # Legend items
+            elif line.startswith(('✅', '⚠️', '❌', '🔵', '🟢', '🟡', '🔴')):
+                p = doc.add_paragraph(line, style='List Bullet')
 
             # Regular paragraph
             else:
@@ -547,7 +575,7 @@ class MonthlyReportGenerator:
             if obs.get('areas_of_development'):
                 try:
                     areas = json.loads(obs['areas_of_development']) if isinstance(obs['areas_of_development'], str) else \
-                    obs['areas_of_development']
+                        obs['areas_of_development']
                     for area in areas:
                         development_counts[area] = development_counts.get(area, 0) + 1
                 except:
@@ -725,7 +753,8 @@ class MonthlyReportGenerator:
 def admin_dashboard():
     st.title("Admin Dashboard")
 
-    tabs = st.tabs(["User Management", "Parent-Child Mappings", "Observer-Child Mappings", "Activity Logs"])
+    tabs = st.tabs(
+        ["User Management", "Parent-Child Mappings", "Observer-Child Mappings", "Activity Logs", "Report Processing"])
 
     with tabs[0]:  # User Management
         st.subheader("User Management")
@@ -899,8 +928,6 @@ def admin_dashboard():
                 except Exception as e:
                     st.error(f"Error processing relationships CSV: {str(e)}")
 
-    # Add this to the admin_dashboard function, within the Observer-Child Mappings tab (tabs[2])
-
     with tabs[2]:  # Observer-Child Mappings
         st.subheader("Observer-Child Mappings")
 
@@ -1030,13 +1057,371 @@ def admin_dashboard():
         except Exception as e:
             st.error(f"Database error: {str(e)}")
 
+    with tabs[4]:  # Report Processing tab
+        st.subheader("Process Reports for Observers")
+
+        # Initialize session state variables for admin report processing
+        if 'admin_processing_mode' not in st.session_state:
+            st.session_state.admin_processing_mode = None
+        if 'admin_report_generated' not in st.session_state:
+            st.session_state.admin_report_generated = None
+        if 'admin_transcript' not in st.session_state:
+            st.session_state.admin_transcript = ""
+
+        # Get all observers
+        observers = supabase.table('users').select("*").eq("role", "Observer").execute().data
+        if not observers:
+            st.warning("No observers found in the system")
+        else:
+            # Select an observer
+            observer_options = {o['id']: f"{o.get('name', 'N/A')} ({o['email']})" for o in observers}
+            selected_observer_id = st.selectbox(
+                "Select Observer",
+                options=list(observer_options.keys()),
+                format_func=lambda x: observer_options[x],
+                key="admin_observer_select"
+            )
+
+            # Get children assigned to selected observer
+            mappings = supabase.table('observer_child_mappings').select("child_id").eq("observer_id",
+                                                                                       selected_observer_id).execute().data
+            child_ids = [m['child_id'] for m in mappings]
+
+            if not child_ids:
+                st.warning("No children assigned to this observer")
+            else:
+                # Get child details
+                children = supabase.table('children').select("*").in_("id", child_ids).execute().data
+                child_options = {c['id']: c.get('name', f"Child {c['id'][:4]}") for c in children}
+
+                # Select a child
+                selected_child_id = st.selectbox(
+                    "Select Student",
+                    options=list(child_options.keys()),
+                    format_func=lambda x: child_options[x],
+                    key="admin_child_select"
+                )
+
+                # Initialize the extractor
+                extractor = ObservationExtractor()
+
+                # Choose processing mode
+                st.subheader("Select Processing Mode")
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    if st.button("OCR Mode (Image Upload)", key="admin_ocr_btn"):
+                        st.session_state.admin_processing_mode = "ocr"
+                        st.session_state.admin_report_generated = None
+                        st.session_state.admin_transcript = ""
+                        st.rerun()
+                with col2:
+                    if st.button("Audio Mode (Recording Upload)", key="admin_audio_btn"):
+                        st.session_state.admin_processing_mode = "audio"
+                        st.session_state.admin_report_generated = None
+                        st.session_state.admin_transcript = ""
+                        st.rerun()
+
+                # Session information
+                st.subheader("Session Information")
+                observer_name = observer_options[selected_observer_id].split(" (")[0]
+                student_name = child_options[selected_child_id]
+
+                session_date = st.date_input("Session Date:", key="admin_session_date").strftime('%d/%m/%Y')
+                col1, col2 = st.columns(2)
+                with col1:
+                    session_start = st.time_input("Start Time:", key="admin_start_time").strftime('%H:%M')
+                with col2:
+                    session_end = st.time_input("End Time:", key="admin_end_time").strftime('%H:%M')
+
+                user_info = {
+                    'student_name': student_name,
+                    'observer_name': observer_name,
+                    'session_date': session_date,
+                    'session_start': session_start,
+                    'session_end': session_end
+                }
+
+                # OCR Processing
+                if st.session_state.admin_processing_mode == "ocr":
+                    st.info("OCR Mode: Upload an image of an observation sheet")
+                    uploaded_file = st.file_uploader("Upload Observation Sheet", type=["jpg", "jpeg", "png"],
+                                                     key="admin_ocr_upload")
+
+                    if uploaded_file and st.button("Process Observation", key="admin_process_ocr"):
+                        with st.spinner("Processing..."):
+                            try:
+                                extracted_text = extractor.extract_text_with_ocr(uploaded_file)
+                                structured_data = extractor.process_with_groq(extracted_text)
+                                observations_text = structured_data.get("observations", "")
+
+                                # Upload file to storage
+                                file_url = None
+                                if uploaded_file:
+                                    # Reset file pointer to beginning
+                                    uploaded_file.seek(0)
+                                    # Upload to storage
+                                    file_url = upload_file_to_storage(
+                                        uploaded_file.getvalue(),
+                                        uploaded_file.name,
+                                        f"image/{uploaded_file.type.split('/')[1]}"
+                                    )
+
+                                if observations_text:
+                                    # Generate report with new format
+                                    report = extractor.generate_report_from_text(observations_text, user_info)
+                                    st.session_state.admin_report_generated = report
+
+                                    # Insert observation
+                                    observation_response = supabase.table('observations').insert({
+                                        "student_id": selected_child_id,
+                                        "username": selected_observer_id,  # Using the selected observer's ID
+                                        "student_name": structured_data.get("studentName", student_name),
+                                        "observer_name": observer_name,
+                                        "class_name": structured_data.get("className", ""),
+                                        "date": structured_data.get("date", session_date),
+                                        "observations": observations_text,
+                                        "strengths": json.dumps(structured_data.get("strengths", [])),
+                                        "areas_of_development": json.dumps(
+                                            structured_data.get("areasOfDevelopment", [])),
+                                        "recommendations": json.dumps(structured_data.get("recommendations", [])),
+                                        "timestamp": datetime.now().isoformat(),
+                                        "filename": uploaded_file.name,
+                                        "full_data": json.dumps(structured_data),
+                                        "theme_of_day": structured_data.get("themeOfDay", ""),
+                                        "curiosity_seed": structured_data.get("curiositySeed", ""),
+                                        "processed_by_admin": True,  # Flag to indicate admin processed this
+                                        "file_url": file_url  # Add the file URL
+                                    }).execute()
+
+                                    st.success("Data processed and saved successfully!")
+                                else:
+                                    st.error("No observations found in the extracted data")
+                            except Exception as e:
+                                st.error(f"Processing error: {str(e)}")
+
+
+                # Audio Processing
+                elif st.session_state.admin_processing_mode == "audio":
+                    st.info("Audio Mode: Upload an audio recording of an observation session")
+                    uploaded_file = st.file_uploader(
+                        "Choose an audio file",
+                        type=["wav", "mp3", "m4a", "mpeg", "ogg", "flac", "aac", "wma", "aiff"],
+                        key="admin_audio_upload"
+                    )
+
+                    if uploaded_file and st.button("Process & Generate Report", key="admin_process_audio"):
+                        if not assemblyai_key:
+                            st.error("AssemblyAI API key is missing.")
+                        else:
+                            with st.spinner("Step 1/2: Transcribing audio..."):
+                                transcript = extractor.transcribe_with_assemblyai(uploaded_file)
+                                st.session_state.admin_transcript = transcript
+
+                            with st.spinner("Step 2/2: Generating report..."):
+                                # Upload file to storage
+                                file_url = None
+                                if uploaded_file:
+                                    # Reset file pointer to beginning
+                                    uploaded_file.seek(0)
+                                    # Upload to storage
+                                    file_url = upload_file_to_storage(
+                                        uploaded_file.getvalue(),
+                                        uploaded_file.name,
+                                        f"audio/{uploaded_file.type.split('/')[1]}"
+                                    )
+
+                                # Generate report with new format
+                                report = extractor.generate_report_from_text(transcript, user_info)
+                                st.session_state.admin_report_generated = report
+
+                                # Extract theme and curiosity seed using AI
+                                try:
+                                    theme_prompt = f"""
+                                    Based on this transcript, identify:
+                                    1. The main theme or topic of the day
+                                    2. A curiosity seed (something that sparked the child's interest or curiosity)
+
+                                    Return as JSON with keys: "themeOfDay" and "curiositySeed"
+
+                                    TRANSCRIPT:
+                                    {transcript}
+                                    """
+
+                                    model = genai.GenerativeModel('gemini-2.0-flash-002')
+                                    response = model.generate_content([
+                                        {"role": "user", "parts": [{"text": theme_prompt}]}
+                                    ])
+
+                                    theme_data = json.loads(response.text)
+                                    theme_of_day = theme_data.get("themeOfDay", "")
+                                    curiosity_seed = theme_data.get("curiositySeed", "")
+                                except:
+                                    theme_of_day = ""
+                                    curiosity_seed = ""
+
+                                # Save to database
+                                supabase.table('observations').insert({
+                                    "student_id": selected_child_id,
+                                    "username": selected_observer_id,  # Using the selected observer's ID
+                                    "student_name": student_name,
+                                    "observer_name": observer_name,
+                                    "class_name": "",
+                                    "date": session_date,
+                                    "observations": transcript,
+                                    "strengths": json.dumps([]),
+                                    "areas_of_development": json.dumps([]),
+                                    "recommendations": json.dumps([]),
+                                    "timestamp": datetime.now().isoformat(),
+                                    "filename": uploaded_file.name,
+                                    "full_data": json.dumps({"transcript": transcript, "report": report}),
+                                    "theme_of_day": theme_of_day,
+                                    "curiosity_seed": curiosity_seed,
+                                    "processed_by_admin": True,  # Flag to indicate admin processed this
+                                    "file_url": file_url  # Add the file URL
+                                }).execute()
+
+                                st.success("Audio processed and report generated successfully!")
+
+                # Report Display and Download
+                if st.session_state.admin_report_generated:
+                    st.subheader("Generated Report")
+                    st.markdown(st.session_state.admin_report_generated)
+                    docx_file = extractor.create_word_document(st.session_state.admin_report_generated)
+                    filename = f"Observer_Report_{student_name.replace(' ', '_')}_{session_date.replace('/', '-')}.docx"
+                    st.download_button(
+                        "Download as Word Document",
+                        data=docx_file,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+
+                    # Email option
+                    st.subheader("Email Report")
+                    with st.form("admin_email_form"):
+                        to_email = st.text_input("Recipient Email", value="parent@example.com")
+                        subject = st.text_input("Subject", value=f"Observer Report for {student_name}")
+                        submitted = st.form_submit_button("Send Email")
+                        if submitted:
+                            success, message = extractor.send_email(to_email, subject,
+                                                                    st.session_state.admin_report_generated)
+                            if success:
+                                st.success(message)
+                            else:
+                                st.error(message)
+
+                    # Show transcript for audio processing
+                    if st.session_state.admin_transcript:
+                        with st.expander("View Transcript"):
+                            st.text_area("Transcript", value=st.session_state.admin_transcript, height=300,
+                                         disabled=True)
+
 
 # Parent Dashboard
 def parent_dashboard(user_id):
     st.title(f"Parent Portal")
 
-    try:
-        # Get the parent's information
+    # Create tabs for different sections
+    parent_tabs = st.tabs(["Reports", "Messages", "Goals"])
+
+    with parent_tabs[0]:  # Reports tab
+        try:
+            # Get the parent's information
+            parent_data = supabase.table('users').select("*").eq("id", user_id).execute().data
+            if not parent_data:
+                st.warning("User not found")
+                return
+
+            parent = parent_data[0]
+            child_id = parent.get('child_id')
+
+            if not child_id:
+                st.warning("No child assigned to your account. Please contact admin.")
+                return
+
+            # Get child information
+            child_data = supabase.table('children').select("*").eq("id", child_id).execute().data
+            if not child_data:
+                st.warning("Child information not found")
+                return
+
+            child = child_data[0]
+
+            # Get observer information
+            mapping = supabase.table('observer_child_mappings').select("*").eq("child_id", child_id).execute().data
+            observer_id = mapping[0]['observer_id'] if mapping else None
+            observer_name = "Not assigned"
+
+            if observer_id:
+                observer_data = supabase.table('users').select("name").eq("id", observer_id).execute().data
+                if observer_data:
+                    observer_name = observer_data[0].get('name', observer_id)
+
+            # Display dashboard
+            st.subheader(f"Your Child: {child.get('name', 'N/A')}")
+
+            cols = st.columns(3)
+            cols[0].metric("Age", child.get('age', 'N/A'))
+            cols[1].metric("Grade/Class", child.get('grade', 'N/A'))
+            cols[2].metric("Assigned Observer", observer_name)
+
+            st.subheader("Recent Reports")
+            reports = supabase.table('observations').select("*").eq("student_id", child_id).order('date',
+                                                                                                  desc=True).execute().data
+
+            if reports:
+                for report in reports:
+                    with st.expander(f"Report from {report.get('date', 'unknown date')}"):
+                        st.write(f"**Observer:** {report.get('observer_name', 'N/A')}")
+                        st.write(f"**Date:** {report.get('date', 'N/A')}")
+
+                        if report.get('observations'):
+                            st.write("**Observations:**")
+                            st.write(report['observations'])
+
+                        if report.get('strengths'):
+                            try:
+                                strengths = json.loads(report['strengths']) if isinstance(report['strengths'], str) else \
+                                    report['strengths']
+                                st.write("**Strengths:**")
+                                for strength in strengths:
+                                    st.write(f"- {strength}")
+                            except:
+                                pass
+
+                        if report.get('areas_of_development'):
+                            try:
+                                areas = json.loads(report['areas_of_development']) if isinstance(
+                                    report['areas_of_development'], str) else report['areas_of_development']
+                                st.write("**Areas for Development:**")
+                                for area in areas:
+                                    st.write(f"- {area}")
+                            except:
+                                pass
+
+                        if report.get('recommendations'):
+                            try:
+                                recs = json.loads(report['recommendations']) if isinstance(report['recommendations'],
+                                                                                           str) else report[
+                                    'recommendations']
+                                st.write("**Recommendations:**")
+                                for rec in recs:
+                                    st.write(f"- {rec}")
+                            except:
+                                pass
+            else:
+                st.info("No reports available yet")
+
+            st.markdown("---")
+            monthly_report_section(child_id, user_id)
+
+        except Exception as e:
+            st.error(f"Database error: {str(e)}")
+
+    with parent_tabs[1]:  # Messages tab
+        st.subheader("Messages")
+
+        # Get child and observer info
         parent_data = supabase.table('users').select("*").eq("id", user_id).execute().data
         if not parent_data:
             st.warning("User not found")
@@ -1049,82 +1434,74 @@ def parent_dashboard(user_id):
             st.warning("No child assigned to your account. Please contact admin.")
             return
 
-        # Get child information
-        child_data = supabase.table('children').select("*").eq("id", child_id).execute().data
-        if not child_data:
-            st.warning("Child information not found")
-            return
-
-        child = child_data[0]
-
         # Get observer information
         mapping = supabase.table('observer_child_mappings').select("*").eq("child_id", child_id).execute().data
         observer_id = mapping[0]['observer_id'] if mapping else None
-        observer_name = "Not assigned"
 
-        if observer_id:
-            observer_data = supabase.table('users').select("name").eq("id", observer_id).execute().data
-            if observer_data:
-                observer_name = observer_data[0].get('name', observer_id)
+        if not observer_id:
+            st.warning("No observer assigned to your child yet.")
+            return
 
-        # Display dashboard
-        st.subheader(f"Your Child: {child.get('name', 'N/A')}")
+        # Get observer details
+        observer_data = supabase.table('users').select("*").eq("id", observer_id).execute().data
+        if not observer_data:
+            st.warning("Observer information not found")
+            return
 
-        cols = st.columns(3)
-        cols[0].metric("Age", child.get('age', 'N/A'))
-        cols[1].metric("Grade/Class", child.get('grade', 'N/A'))
-        cols[2].metric("Assigned Observer", observer_name)
+        observer = observer_data[0]
 
-        st.subheader("Recent Reports")
-        reports = supabase.table('observations').select("*").eq("student_id", child_id).order('date', desc=True).execute().data
+        # Display messaging interface
+        st.write(f"**Messaging with:** {observer.get('name', 'Observer')}")
 
-        if reports:
-            for report in reports:
-                with st.expander(f"Report from {report.get('date', 'unknown date')}"):
-                    st.write(f"**Observer:** {report.get('observer_name', 'N/A')}")
-                    st.write(f"**Date:** {report.get('date', 'N/A')}")
+        # Get existing messages
+        messages = supabase.table('messages').select("*") \
+            .or_(f"sender_id.eq.{user_id},receiver_id.eq.{user_id}") \
+            .or_(f"sender_id.eq.{observer_id},receiver_id.eq.{observer_id}") \
+            .order('timestamp', desc=False) \
+            .execute().data
 
-                    if report.get('observations'):
-                        st.write("**Observations:**")
-                        st.write(report['observations'])
+        # Display message history
+        message_container = st.container(height=400)
+        with message_container:
+            for msg in messages:
+                is_from_me = msg['sender_id'] == user_id
 
-                    if report.get('strengths'):
-                        try:
-                            strengths = json.loads(report['strengths']) if isinstance(report['strengths'], str) else \
-                                report['strengths']
-                            st.write("**Strengths:**")
-                            for strength in strengths:
-                                st.write(f"- {strength}")
-                        except:
-                            pass
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    st.write("You:" if is_from_me else f"{observer.get('name', 'Observer')}:")
+                with col2:
+                    st.text_area("", value=msg['content'], height=70, key=f"msg_{msg['id']}", disabled=True)
 
-                    if report.get('areas_of_development'):
-                        try:
-                            areas = json.loads(report['areas_of_development']) if isinstance(
-                                report['areas_of_development'], str) else report['areas_of_development']
-                            st.write("**Areas for Development:**")
-                            for area in areas:
-                                st.write(f"- {area}")
-                        except:
-                            pass
+        # Send new message
+        with st.form("send_message_form"):
+            new_message = st.text_area("Type your message:", height=100)
+            if st.form_submit_button("Send Message"):
+                if new_message.strip():
+                    # Insert message into database
+                    supabase.table('messages').insert({
+                        "sender_id": user_id,
+                        "receiver_id": observer_id,
+                        "content": new_message,
+                        "timestamp": datetime.now().isoformat(),
+                        "read": False
+                    }).execute()
+                    st.success("Message sent!")
+                    st.rerun()
+                else:
+                    st.error("Cannot send empty message")
 
-                    if report.get('recommendations'):
-                        try:
-                            recs = json.loads(report['recommendations']) if isinstance(report['recommendations'],
-                                                                                       str) else report[
-                                'recommendations']
-                            st.write("**Recommendations:**")
-                            for rec in recs:
-                                st.write(f"- {rec}")
-                        except:
-                            pass
-        else:
-            st.info("No reports available yet")
-
-        st.markdown("---")
-        monthly_report_section(child_id, user_id)
+    with parent_tabs[2]:  # Goals tab
         st.markdown("---")
         st.subheader("Goal Tracking")
+
+        parent_data = supabase.table('users').select("*").eq("id", user_id).execute().data
+        if not parent_data:
+            st.warning("User not found")
+            return
+
+        parent = parent_data[0]
+        child_id = parent.get('child_id')
+
         if child_id:
             goals = supabase.table('goals').select("*").eq("child_id", child_id).execute().data
 
@@ -1174,9 +1551,6 @@ def parent_dashboard(user_id):
                                     st.write(fb.get('feedback_text', 'No feedback text'))
             else:
                 st.info("No goals set for your child yet")
-
-    except Exception as e:
-        st.error(f"Database error: {str(e)}")
 
 
 def monthly_report_section(child_id, parent_id):
@@ -1714,7 +2088,6 @@ def main():
             # Show a welcome or intermediate page instead of the full admin dashboard
             st.title("Welcome, Admin")
             st.write("You are logged in as an administrator.")
-
             # Add a button to proceed to the dashboard
             if st.button("Access Admin Dashboard"):
                 st.session_state.admin_initial_login = False
@@ -1746,11 +2119,296 @@ def main():
     }).execute()
 
     logout_button()
-    observer_tabs = st.tabs(["Observation Processing", "Goal Management", "Student Feedback", "Monthly Reports"])
+    observer_tabs = st.tabs(["Observation Processing", "Goal Management", "Messages", "Monthly Reports"])
 
     with observer_tabs[0]:
-        # Your existing observation processing code goes here
-        pass
+        # Sidebar for user information
+        with st.sidebar:
+            st.subheader("Session Information")
+            st.session_state.user_info['student_name'] = st.text_input("Student Name:",
+                                                                       value=st.session_state.user_info['student_name'])
+            st.session_state.user_info['observer_name'] = st.text_input("Observer Name:",
+                                                                        value=st.session_state.user_info[
+                                                                                  'observer_name'] or st.session_state.auth.get(
+                                                                            'name', ''))
+            st.session_state.user_info['session_date'] = st.date_input("Session Date:").strftime('%d/%m/%Y')
+            col1, col2 = st.columns(2)
+            with col1:
+                st.session_state.user_info['session_start'] = st.time_input("Start Time:").strftime('%H:%M')
+            with col2:
+                st.session_state.user_info['session_end'] = st.time_input("End Time:").strftime('%H:%M')
+
+        # Choose processing mode
+        st.subheader("Select Processing Mode")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("OCR Mode (Image Upload)"):
+                st.session_state.processing_mode = "ocr"
+                st.session_state.audio_transcription = ""
+                st.session_state.report_generated = None
+        with col2:
+            if st.button("Audio Mode (Recording Upload)"):
+                st.session_state.processing_mode = "audio"
+                st.session_state.audio_transcription = ""
+                st.session_state.report_generated = None
+
+        # Get children assigned to this observer
+        mappings = supabase.table('observer_child_mappings').select("child_id").eq("observer_id", st.session_state.auth[
+            'user_id']).execute().data
+        child_ids = [m['child_id'] for m in mappings]
+        children = supabase.table('children').select("*").in_("id", child_ids).execute().data
+        child_options = {c['id']: c.get('name', f"Child {c['id'][:4]}") for c in children}
+
+        selected_child_id = st.selectbox(
+            "Select Student",
+            options=list(child_options.keys()),
+            format_func=lambda x: child_options[x],
+            key="ocr_child_select"
+        )
+
+        # OCR Processing
+        # OCR Processing
+        if st.session_state.processing_mode == "ocr":
+            st.info("OCR Mode: Upload an image of an observation sheet")
+            uploaded_file = st.file_uploader("Upload Observation Sheet", type=["jpg", "jpeg", "png"])
+            if uploaded_file and st.button("Process Observation"):
+                with st.spinner("Processing..."):
+                    try:
+                        # Process the image with OCR
+                        extracted_text = extractor.extract_text_with_ocr(uploaded_file)
+                        structured_data = extractor.process_with_groq(extracted_text)
+                        observations_text = structured_data.get("observations", "")
+
+                        # Upload file to storage
+                        file_url = None
+                        if uploaded_file:
+                            # Reset file pointer to beginning
+                            uploaded_file.seek(0)
+                            # Upload to storage
+                            file_url = upload_file_to_storage(
+                                uploaded_file.getvalue(),
+                                uploaded_file.name,
+                                f"image/{uploaded_file.type.split('/')[1]}"
+                            )
+
+                        if observations_text:
+                            # Generate report with new format
+                            report = extractor.generate_report_from_text(observations_text, st.session_state.user_info)
+                            st.session_state.report_generated = report
+
+                            # Get child ID from mappings if available
+                            child_id = structured_data.get("studentId", "")
+                            if not child_id:
+                                # Try to find child by name
+                                child_data = supabase.table('users').select("id").ilike("name",
+                                                                                        f"%{structured_data.get('studentName', '')}%").execute().data
+                                if child_data:
+                                    child_id = child_data[0]['id']
+
+                            # Insert observation and capture the returned ID
+                            observation_response = supabase.table('observations').insert({
+                                "student_id": selected_child_id,
+                                "username": st.session_state.auth['user_id'],
+                                "student_name": structured_data.get("studentName", ""),
+                                "observer_name": st.session_state.user_info['observer_name'],
+                                "class_name": structured_data.get("className", ""),
+                                "date": structured_data.get("date", ""),
+                                "observations": observations_text,
+                                "strengths": json.dumps(structured_data.get("strengths", [])),
+                                "areas_of_development": json.dumps(structured_data.get("areasOfDevelopment", [])),
+                                "recommendations": json.dumps(structured_data.get("recommendations", [])),
+                                "timestamp": datetime.now().isoformat(),
+                                "filename": uploaded_file.name,
+                                "full_data": json.dumps(structured_data),
+                                "theme_of_day": structured_data.get("themeOfDay", ""),
+                                "curiosity_seed": structured_data.get("curiositySeed", ""),
+                                "file_url": file_url  # Add the file URL
+                            }).execute()
+
+                            # Get the observation ID for goal alignment
+                            observation_id = observation_response.data[0]['id'] if observation_response.data else None
+
+                            st.success("Data processed and saved successfully!")
+
+                            # Analyze alignment with goals if we have a child ID and observation ID
+                            if child_id and observation_id:
+                                goals = supabase.table('goals').select("*").eq("child_id", child_id).eq("status",
+                                                                                                        "active").execute().data
+
+                                if goals:
+                                    for goal in goals:
+                                        # Use Groq API to analyze alignment
+                                        alignment_prompt = f"""
+                                        Analyze how well this observation report aligns with the following learning goal:
+
+                                        GOAL: {goal['goal_text']}
+
+                                        OBSERVATION REPORT:
+                                        {observations_text}
+
+                                        Provide your analysis in JSON format with:
+                                        - alignment_score (0-10 scale)
+                                        - analysis_text (detailed explanation of alignment)
+                                        - suggested_next_steps
+                                        """
+
+                                        try:
+                                            # Using Groq API for analysis
+                                            response = requests.post(
+                                                'https://api.groq.com/openai/v1/chat/completions',
+                                                headers={
+                                                    'Authorization': f'Bearer {extractor.groq_api_key}',
+                                                    'Content-Type': 'application/json'
+                                                },
+                                                json={
+                                                    "model": "llama-3.3-70b-versatile",
+                                                    "messages": [
+                                                        {
+                                                            "role": "system",
+                                                            "content": "You are an educational assessment AI that analyzes how well observation reports align with learning goals."
+                                                        },
+                                                        {
+                                                            "role": "user",
+                                                            "content": alignment_prompt
+                                                        }
+                                                    ],
+                                                    "temperature": 0.2,
+                                                    "response_format": {"type": "json_object"}
+                                                }
+                                            )
+
+                                            response.raise_for_status()
+                                            data = response.json()
+                                            analysis = json.loads(data['choices'][0]['message']['content'])
+
+                                            # Save alignment analysis
+                                            alignment_data = {
+                                                "goal_id": goal['id'],
+                                                "report_id": observation_id,  # Use the actual observation ID
+                                                "alignment_score": analysis.get('alignment_score', 0),
+                                                "analysis_text": analysis.get('analysis_text', 'No analysis')
+                                            }
+                                            supabase.table('goal_alignments').insert(alignment_data).execute()
+
+                                        except Exception as e:
+                                            st.error(f"Goal alignment analysis failed: {str(e)}")
+                        else:
+                            st.error("No observations found in the extracted data")
+                    except Exception as e:
+                        st.error(f"Processing error: {str(e)}")
+
+
+        # Audio Processing
+        elif st.session_state.processing_mode == "audio":
+            st.info("Audio Mode: Upload an audio recording of an observation session")
+            uploaded_file = st.file_uploader("Choose an audio file",
+                                             type=["wav", "mp3", "m4a", "mpeg", "ogg", "flac", "aac", "wma", "aiff"])
+            if uploaded_file and st.button("Process & Generate Report"):
+                if not assemblyai_key:
+                    st.error("AssemblyAI API key is missing.")
+                else:
+                    with st.spinner("Step 1/2: Transcribing audio..."):
+                        transcript = extractor.transcribe_with_assemblyai(uploaded_file)
+                        st.session_state.audio_transcription = transcript
+
+                    with st.spinner("Step 2/2: Generating report..."):
+                        # Upload file to storage
+                        file_url = None
+                        if uploaded_file:
+                            # Reset file pointer to beginning
+                            uploaded_file.seek(0)
+                            # Upload to storage
+                            file_url = upload_file_to_storage(
+                                uploaded_file.getvalue(),
+                                uploaded_file.name,
+                                f"audio/{uploaded_file.type.split('/')[1]}"
+                            )
+
+                        # Generate report with new format
+                        report = extractor.generate_report_from_text(transcript, st.session_state.user_info)
+                        st.session_state.report_generated = report
+
+                        # Extract theme and curiosity seed using AI
+                        try:
+                            theme_prompt = f"""
+                            Based on this transcript, identify:
+                            1. The main theme or topic of the day
+                            2. A curiosity seed (something that sparked the child's interest or curiosity)
+
+                            Return as JSON with keys: "themeOfDay" and "curiositySeed"
+
+                            TRANSCRIPT:
+                            {transcript}
+                            """
+
+                            model = genai.GenerativeModel('gemini-2.0-flash-002')
+                            response = model.generate_content([
+                                {"role": "user", "parts": [{"text": theme_prompt}]}
+                            ])
+
+                            theme_data = json.loads(response.text)
+                            theme_of_day = theme_data.get("themeOfDay", "")
+                            curiosity_seed = theme_data.get("curiositySeed", "")
+                        except:
+                            theme_of_day = ""
+                            curiosity_seed = ""
+
+                        supabase.table('observations').insert({
+                            "student_id": selected_child_id,
+                            "username": st.session_state.auth['user_id'],
+                            "student_name": st.session_state.user_info['student_name'],
+                            "observer_name": st.session_state.user_info['observer_name'],
+                            "class_name": "",
+                            "date": st.session_state.user_info['session_date'],
+                            "observations": transcript,
+                            "strengths": json.dumps([]),
+                            "areas_of_development": json.dumps([]),
+                            "recommendations": json.dumps([]),
+                            "timestamp": datetime.now().isoformat(),
+                            "filename": uploaded_file.name,
+                            "full_data": json.dumps({"transcript": transcript, "report": report}),
+                            "theme_of_day": theme_of_day,
+                            "curiosity_seed": curiosity_seed,
+                            "file_url": file_url  # Add the file URL
+                        }).execute()
+
+        # Transcript Editor
+        if st.session_state.audio_transcription:
+            if st.button("Edit Transcription" if not st.session_state.show_edit_transcript else "Hide Editor"):
+                st.session_state.show_edit_transcript = not st.session_state.show_edit_transcript
+            if st.session_state.show_edit_transcript:
+                st.subheader("Edit Transcription")
+                edited = st.text_area("Edit transcript below:", value=st.session_state.audio_transcription, height=200)
+                if edited != st.session_state.audio_transcription:
+                    st.session_state.audio_transcription = edited
+                if st.button("Regenerate Report with Edited Transcript"):
+                    with st.spinner("Regenerating report..."):
+                        report = extractor.generate_report_from_text(edited, st.session_state.user_info)
+                        st.session_state.report_generated = report
+
+        # Report Display and Download
+        if st.session_state.report_generated:
+            st.subheader("Generated Report")
+            st.markdown(st.session_state.report_generated)
+            docx_file = extractor.create_word_document(st.session_state.report_generated)
+            student = st.session_state.user_info['student_name'].replace(" ", "_")
+            date = st.session_state.user_info['session_date'].replace("/", "-")
+            filename = f"Observer_Report_{student}_{date}.docx"
+            st.download_button("Download as Word Document", data=docx_file, file_name=filename,
+                               mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+            st.subheader("Email Report")
+            with st.form("email_form"):
+                to_email = st.text_input("Recipient Email", value="parent@example.com")
+                subject = st.text_input("Subject",
+                                        value=f"Observer Report for {st.session_state.user_info['student_name']}")
+                submitted = st.form_submit_button("Send Email")
+                if submitted:
+                    success, message = extractor.send_email(to_email, subject, st.session_state.report_generated)
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
 
     with observer_tabs[1]:
         st.subheader("Goal Management")
@@ -1827,6 +2485,77 @@ def main():
         else:
             st.warning("No children assigned to you yet")
 
+    with observer_tabs[2]:  # Messages tab
+        st.subheader("Messages with Parents")
+
+        # Get all children assigned to this observer
+        mappings = supabase.table('observer_child_mappings').select("child_id").eq("observer_id",
+                                                                                   st.session_state.auth[
+                                                                                       'user_id']).execute().data
+        child_ids = [m['child_id'] for m in mappings]
+
+        if not child_ids:
+            st.warning("No children assigned to you yet")
+        else:
+            # Get all parents of these children
+            parents = supabase.table('users').select("*").eq("role", "Parent").in_("child_id", child_ids).execute().data
+
+            if not parents:
+                st.info("No parents found for your assigned children")
+            else:
+                # Create a selection for the parent to message
+                parent_options = {p['id']: f"{p.get('name', 'Parent')} - {p.get('email', 'No email')}" for p in parents}
+                selected_parent = st.selectbox("Select Parent to Message",
+                                               options=list(parent_options.keys()),
+                                               format_func=lambda x: parent_options[x])
+
+                # Get child info for this parent
+                selected_parent_data = next((p for p in parents if p['id'] == selected_parent), None)
+                if selected_parent_data:
+                    child_id = selected_parent_data.get('child_id')
+                    child_data = supabase.table('children').select("*").eq("id", child_id).execute().data
+                    child_name = child_data[0].get('name', 'Child') if child_data else 'Child'
+
+                    st.write(f"**Messaging with parent of:** {child_name}")
+
+                    # Get existing messages
+                    messages = supabase.table('messages').select("*") \
+                        .or_(
+                        f"sender_id.eq.{st.session_state.auth['user_id']},receiver_id.eq.{st.session_state.auth['user_id']}") \
+                        .or_(f"sender_id.eq.{selected_parent},receiver_id.eq.{selected_parent}") \
+                        .order('timestamp', desc=False) \
+                        .execute().data
+
+                    # Display message history
+                    message_container = st.container(height=400)
+                    with message_container:
+                        for msg in messages:
+                            is_from_me = msg['sender_id'] == st.session_state.auth['user_id']
+
+                            col1, col2 = st.columns([1, 4])
+                            with col1:
+                                st.write("You:" if is_from_me else f"{selected_parent_data.get('name', 'Parent')}:")
+                            with col2:
+                                st.text_area("", value=msg['content'], height=70, key=f"msg_{msg['id']}", disabled=True)
+
+                    # Send new message
+                    with st.form("send_message_form_observer"):
+                        new_message = st.text_area("Type your message:", height=100)
+                        if st.form_submit_button("Send Message"):
+                            if new_message.strip():
+                                # Insert message into database
+                                supabase.table('messages').insert({
+                                    "sender_id": st.session_state.auth['user_id'],
+                                    "receiver_id": selected_parent,
+                                    "content": new_message,
+                                    "timestamp": datetime.now().isoformat(),
+                                    "read": False
+                                }).execute()
+                                st.success("Message sent!")
+                                st.rerun()
+                            else:
+                                st.error("Cannot send empty message")
+
     with observer_tabs[3]:  # Monthly Reports tab
         observer_monthly_report_section(st.session_state.auth['user_id'])
 
@@ -1861,232 +2590,6 @@ def main():
                 st.info("No feedback received yet")
         else:
             st.warning("No children assigned to you yet")
-
-    # Sidebar for user information
-    with st.sidebar:
-        st.subheader("Session Information")
-        st.session_state.user_info['student_name'] = st.text_input("Student Name:",
-                                                                   value=st.session_state.user_info['student_name'])
-        st.session_state.user_info['observer_name'] = st.text_input("Observer Name:",
-                                                                    value=st.session_state.user_info[
-                                                                              'observer_name'] or st.session_state.auth.get(
-                                                                        'name', ''))
-        st.session_state.user_info['session_date'] = st.date_input("Session Date:").strftime('%d/%m/%Y')
-        col1, col2 = st.columns(2)
-        with col1:
-            st.session_state.user_info['session_start'] = st.time_input("Start Time:").strftime('%H:%M')
-        with col2:
-            st.session_state.user_info['session_end'] = st.time_input("End Time:").strftime('%H:%M')
-
-    # Choose processing mode
-    st.subheader("Select Processing Mode")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("OCR Mode (Image Upload)"):
-            st.session_state.processing_mode = "ocr"
-            st.session_state.audio_transcription = ""
-            st.session_state.report_generated = None
-    with col2:
-        if st.button("Audio Mode (Recording Upload)"):
-            st.session_state.processing_mode = "audio"
-            st.session_state.audio_transcription = ""
-            st.session_state.report_generated = None
-
-    # OCR Processing
-    # In OCR Processing Section (add before file upload)
-    mappings = supabase.table('observer_child_mappings').select("child_id").eq("observer_id", st.session_state.auth[
-        'user_id']).execute().data
-    child_ids = [m['child_id'] for m in mappings]
-    children = supabase.table('children').select("*").in_("id", child_ids).execute().data
-    child_options = {c['id']: c.get('name', f"Child {c['id'][:4]}") for c in children}
-
-    selected_child_id = st.selectbox(
-        "Select Student",
-        options=list(child_options.keys()),
-        format_func=lambda x: child_options[x],
-        key="ocr_child_select"
-    )
-    if st.session_state.processing_mode == "ocr":
-        st.info("OCR Mode: Upload an image of an observation sheet")
-        uploaded_file = st.file_uploader("Upload Observation Sheet", type=["jpg", "jpeg", "png"])
-        if uploaded_file and st.button("Process Observation"):
-            with st.spinner("Processing..."):
-                try:
-                    extracted_text = extractor.extract_text_with_ocr(uploaded_file)
-                    structured_data = extractor.process_with_groq(extracted_text)
-                    observations_text = structured_data.get("observations", "")
-                    child_id = None  # Initialize child_id variable
-
-                    if observations_text:
-                        report = extractor.generate_report_from_text(observations_text, st.session_state.user_info)
-                        st.session_state.report_generated = report
-
-                        # Get child ID from mappings if available
-                        child_id = structured_data.get("studentId", "")
-                        if not child_id:
-                            # Try to find child by name
-                            child_data = supabase.table('users').select("id").ilike("name",
-                                                                                    f"%{structured_data.get('studentName', '')}%").execute().data
-                            if child_data:
-                                child_id = child_data[0]['id']
-
-                        # Insert observation and capture the returned ID
-                        observation_response = supabase.table('observations').insert({
-                            "student_id": selected_child_id,
-                            "username": st.session_state.auth['user_id'],
-                            "student_name": structured_data.get("studentName", ""),
-
-                            "class_name": structured_data.get("className", ""),
-                            "date": structured_data.get("date", ""),
-                            "observations": observations_text,
-                            "strengths": json.dumps(structured_data.get("strengths", [])),
-                            "areas_of_development": json.dumps(structured_data.get("areasOfDevelopment", [])),
-                            "recommendations": json.dumps(structured_data.get("recommendations", [])),
-                            "timestamp": datetime.now().isoformat(),
-                            "filename": uploaded_file.name,
-                            "full_data": json.dumps(structured_data)
-                        }).execute()
-
-                        # Get the observation ID for goal alignment
-                        observation_id = observation_response.data[0]['id'] if observation_response.data else None
-
-                        st.success("Data processed and saved successfully!")
-
-                        # Analyze alignment with goals if we have a child ID and observation ID
-                        if child_id and observation_id:
-                            goals = supabase.table('goals').select("*").eq("child_id", child_id).eq("status",
-                                                                                                    "active").execute().data
-
-                            if goals:
-                                for goal in goals:
-                                    # Use Groq API to analyze alignment
-                                    alignment_prompt = f"""
-                                    Analyze how well this observation report aligns with the following learning goal:
-
-                                    GOAL: {goal['goal_text']}
-
-                                    OBSERVATION REPORT:
-                                    {observations_text}
-
-                                    Provide your analysis in JSON format with:
-                                    - alignment_score (0-10 scale)
-                                    - analysis_text (detailed explanation of alignment)
-                                    - suggested_next_steps
-                                    """
-
-                                    try:
-                                        # Using Groq API for analysis
-                                        response = requests.post(
-                                            'https://api.groq.com/openai/v1/chat/completions',
-                                            headers={
-                                                'Authorization': f'Bearer {extractor.groq_api_key}',
-                                                'Content-Type': 'application/json'
-                                            },
-                                            json={
-                                                "model": "llama-3.3-70b-versatile",
-                                                "messages": [
-                                                    {
-                                                        "role": "system",
-                                                        "content": "You are an educational assessment AI that analyzes how well observation reports align with learning goals."
-                                                    },
-                                                    {
-                                                        "role": "user",
-                                                        "content": alignment_prompt
-                                                    }
-                                                ],
-                                                "temperature": 0.2,
-                                                "response_format": {"type": "json_object"}
-                                            }
-                                        )
-
-                                        response.raise_for_status()
-                                        data = response.json()
-                                        analysis = json.loads(data['choices'][0]['message']['content'])
-
-                                        # Save alignment analysis
-                                        alignment_data = {
-                                            "goal_id": goal['id'],
-                                            "report_id": observation_id,  # Use the actual observation ID
-                                            "alignment_score": analysis.get('alignment_score', 0),
-                                            "analysis_text": analysis.get('analysis_text', 'No analysis')
-                                        }
-                                        supabase.table('goal_alignments').insert(alignment_data).execute()
-
-                                    except Exception as e:
-                                        st.error(f"Goal alignment analysis failed: {str(e)}")
-                    else:
-                        st.error("No observations found in the extracted data")
-                except Exception as e:
-                    st.error(f"Processing error: {str(e)}")
-
-    # Audio Processing
-    elif st.session_state.processing_mode == "audio":
-        st.info("Audio Mode: Upload an audio recording of an observation session")
-        uploaded_file = st.file_uploader("Choose an audio file",
-                                         type=["wav", "mp3", "m4a", "mpeg", "ogg", "flac", "aac", "wma", "aiff"])
-        if uploaded_file and st.button("Process & Generate Report"):
-            if not assemblyai_key:
-                st.error("AssemblyAI API key is missing.")
-            else:
-                with st.spinner("Step 1/2: Transcribing audio..."):
-                    transcript = extractor.transcribe_with_assemblyai(uploaded_file)
-                    st.session_state.audio_transcription = transcript
-                with st.spinner("Step 2/2: Generating report..."):
-                    report = extractor.generate_report_from_text(transcript, st.session_state.user_info)
-                    st.session_state.report_generated = report
-                    supabase.table('observations').insert({
-                        "student_id": selected_child_id,
-                        "username": st.session_state.auth['user_id'],
-                        "student_name": st.session_state.user_info['student_name'],
-
-                        "class_name": "",
-                        "date": st.session_state.user_info['session_date'],
-                        "observations": transcript,
-                        "strengths": json.dumps([]),
-                        "areas_of_development": json.dumps([]),
-                        "recommendations": json.dumps([]),
-                        "timestamp": datetime.now().isoformat(),
-                        "filename": uploaded_file.name,
-                        "full_data": json.dumps({"transcript": transcript, "report": report})
-                    }).execute()
-
-    # Transcript Editor
-    if st.session_state.audio_transcription:
-        if st.button("Edit Transcription" if not st.session_state.show_edit_transcript else "Hide Editor"):
-            st.session_state.show_edit_transcript = not st.session_state.show_edit_transcript
-        if st.session_state.show_edit_transcript:
-            st.subheader("Edit Transcription")
-            edited = st.text_area("Edit transcript below:", value=st.session_state.audio_transcription, height=200)
-            if edited != st.session_state.audio_transcription:
-                st.session_state.audio_transcription = edited
-            if st.button("Regenerate Report with Edited Transcript"):
-                with st.spinner("Regenerating report..."):
-                    report = extractor.generate_report_from_text(edited, st.session_state.user_info)
-                    st.session_state.report_generated = report
-
-    # Report Display and Download
-    if st.session_state.report_generated:
-        st.subheader("Generated Report")
-        st.markdown(st.session_state.report_generated)
-        docx_file = extractor.create_word_document(st.session_state.report_generated)
-        student = st.session_state.user_info['student_name'].replace(" ", "_")
-        date = st.session_state.user_info['session_date'].replace("/", "-")
-        filename = f"Observer_Report_{student}_{date}.docx"
-        st.download_button("Download as Word Document", data=docx_file, file_name=filename,
-                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-
-        st.subheader("Email Report")
-        with st.form("email_form"):
-            to_email = st.text_input("Recipient Email", value="parent@example.com")
-            subject = st.text_input("Subject",
-                                    value=f"Observer Report for {st.session_state.user_info['student_name']}")
-            submitted = st.form_submit_button("Send Email")
-            if submitted:
-                success, message = extractor.send_email(to_email, subject, st.session_state.report_generated)
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
 
 
 if __name__ == "__main__":
