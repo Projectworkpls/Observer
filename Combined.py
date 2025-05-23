@@ -326,7 +326,7 @@ Be creative in extracting information based on context."""
 
         try:
             # Configure the model - using Gemini Pro for most comprehensive responses
-            model = genai.GenerativeModel('gemini-1.5-pro-002')
+            model = genai.GenerativeModel('gemini-2.0-flash-002')
 
             # Generate content with Gemini
             response = model.generate_content([
