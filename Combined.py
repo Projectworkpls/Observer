@@ -326,7 +326,6 @@ Be creative in extracting information based on context."""
 
         🧒 Child's Name: {user_info['student_name']}
         📅 Date: [{user_info['session_date']}]
-        🎯 Theme of the Day: [Extract from text]
         🌱 Curiosity Seed Explored: [Extract from text]
 
         📊 Growth Metrics & Observations
@@ -352,7 +351,7 @@ Be creative in extracting information based on context."""
         [🔵 Balanced Growth / 🟡 Moderate Growth / 🔴 Limited Growth] – [X/7] Areas Active  
         [Brief recommendation for next steps or continued development]
 
-        📣 Parent Note:  
+        📣 Note for Parent:  
         [Comprehensive summary for parents with actionable insights and encouragement based on today’s session]
 
         🟢 Legend:  
