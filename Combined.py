@@ -318,6 +318,7 @@ Be creative in extracting information based on context."""
             - 🔴 Needs Encouragement: 1–2 active areas
         - Include the new **Communication Skills & Thought Clarity** section.
         - The tone should be professional, warm, and insightful — aimed at helping parents understand their child's daily growth.
+        Also give reason why you have assigned a particular score to the child, explain every score and assignment 
 
         📝 TEXT CONTENT:
         {text_content}
