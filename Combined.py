@@ -319,7 +319,11 @@ Be creative in extracting information based on context."""
         - Include the new **Communication Skills & Thought Clarity** section.
         - The tone should be professional, warm, and insightful — aimed at helping parents understand their child's daily growth.
         Also give reason why you have assigned a particular score to the child, explain every score and assignment though reason
-        Make sure no points are repeated and the entire report is to the point.
+        Make sure no points are repeated and the entire report is to the point. Can it be a scale ..Ratings 1-3 fair
+        4-5 moderate
+        5-6 Good
+        7 -Excellent
+        always print the whole legend so that the person can cross verify and make sure the entire report sticks to the legend and is accurate to it.
 
         📝 TEXT CONTENT:
         {text_content}
