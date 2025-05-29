@@ -752,7 +752,7 @@ class MonthlyReportGenerator:
         return summary
 
 
-def admin_dashboard():
+def admin_dashboard(supabase):
     st.title("Admin Dashboard")
 
     tabs = st.tabs(
@@ -1320,7 +1320,7 @@ def admin_dashboard():
 
 
 # Parent Dashboard
-def parent_dashboard(user_id):
+def parent_dashboard(user_id, supabase):
     st.title(f"Parent Portal")
 
     # Create tabs for different sections
@@ -2093,6 +2093,7 @@ def main():
 
     # Admin Dashboard - Modified to check for initial login
     if st.session_state.auth['role'] == 'Admin':
+        admin_dashboard(supabase)
         if st.session_state.admin_initial_login:
             # Show a welcome or intermediate page instead of the full admin dashboard
             st.title("Welcome, Admin")
@@ -2112,6 +2113,7 @@ def main():
 
     # Parent Dashboard
     if st.session_state.auth['role'] == 'Parent':
+        parent_dashboard(st.session_state.auth['user_id'], supabase)
         parent_dashboard(st.session_state.auth['user_id'])
         logout_button()
         return
