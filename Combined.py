@@ -307,24 +307,35 @@ Be creative in extracting information based on context."""
         prompt = f"""
         You are an educational observer tasked with generating a comprehensive and accurate Daily Growth Report based on the following observational notes from a student session. 
 
-        Please carefully analyze the given text and complete the report using the **exact format, emojis, section titles, and scoring rubrics** as described below. The student should be referred to consistently using gender-specific pronouns (e.g., he/his or she/her) — infer gender from the name or text, or default to 'he/his' if unclear.
+        Please carefully analyze the given text and complete the report using the exact format, emojis, section titles, and scoring rubrics as described below. The student should be referred to consistently using gender-specific pronouns (e.g., he/his or she/her) — infer gender from the name or text, or default to 'he/his' if unclear.
 
-        📌 **Important Instructions for the Report:**
-        - Follow the format **exactly** as shown below.
-        - **Make reasonable inferences** for items not explicitly stated in the text.
-        - Ensure that the final **Overall Growth Score** and category (🔵/🟡/🔴) **accurately reflects the number of active areas**, according to:
-            - 🟢 Good: 6–7 active areas  
-            - 🟡 Moderate: 3–5 active areas  
-            - 🔴 Needs Encouragement: 1–2 active areas
-        - Include the new **Communication Skills & Thought Clarity** section.
+        📌 Important Instructions for the Report:
+        - Follow the format exactly as shown below.
+        - Make reasonable inferences for items not explicitly stated in the text.
+        - Ensure that the final Overall Growth Score and category (🟢/💚/⚠️/📈) accurately reflects the number of active areas, according to:
+        🟢 Excellent (7/7 areas) – Clear growth with strong evidence
+        💚 Good (5-6 areas) – Solid engagement with positive trends        
+        ⚠️ Fair (3-4 areas) – Some engagement, needs encouragement        
+        📈 Needs Work (1-2 areas) – Area not activated or underperforming today
+        - Include the new Communication Skills & Thought Clarity section.
         - The tone should be professional, warm, and insightful — aimed at helping parents understand their child's daily growth.
-        Also give reason why you have assigned a particular score to the child, explain every score and assignment though reason
-        Make sure no points are repeated and the entire report is to the point. Can it be a scale ..Ratings 1-3 fair
-        4-5 moderate
-        5-6 Good
-        7 -Excellent
-        always print the whole legend so that the person can cross verify and make sure the entire report sticks to the legend and is accurate to it.
-
+        Instructions for Report Generation
+        Assign scores based on clear, evidence-backed observations for each area.
+        
+        Explain each score with a specific reason—avoid generalizations or repeated points. Every score must be justified individually and precisely.
+        
+        Use the following rating scale consistently:
+        
+        Ratings Scale:
+         Excellent (7/7 areas) – Clear growth with strong evidence
+         Good (5-6 areas) – Solid engagement with positive trends        
+         Fair (3-4 areas) – Some engagement, needs encouragement        
+         Needs Work (1-2 areas) – Area not activated or underperforming today
+        Always include the complete legend in every report so the evaluator or reader can cross-check scores against the criteria.
+        
+        Ensure the entire report strictly follows the legend and that scoring aligns accurately with the defined scale.
+        
+        Do not use tables for the "Growth Metrics & Observations" section. Present the content in a well-spaced, structured paragraph format to preserve formatting integrity across platforms.
         📝 TEXT CONTENT:
         {text_content}
 
@@ -360,15 +371,16 @@ Be creative in extracting information based on context."""
         📣 Note for Parent:  
         [Comprehensive summary for parents with actionable insights and encouragement based on today’s session]
 
-        🟢 Legend:  
-        ✅ Excellent: Clear growth with evidence  
-        ⚠️ Fair: Some engagement, needs encouragement  
-        📈 Needs Work: Area not activated today
+        🟢 Legend
+        
+        ✅ Performance by Area
+        🟢 Excellent (7/7 areas) – Clear growth with strong evidence
+        💚 Good (5-6 areas) – Solid engagement with positive trends        
+        ⚠️ Fair (3-4 areas) – Some engagement, needs encouragement        
+        📈 Needs Work (1-2 areas) – Area not activated or underperforming today
 
-        🔵 Overall Score:  
-        🟢 Good (6-7 active areas)  
-        🟡 Moderate (3-5 areas)  
-        🔴 Needs Encouragement (1-2 areas)
+
+        give the entire report such that its a direct send worthy item, so all things should always be there and no other unecessary words in the response. No repetation.
         """
 
         try:
@@ -395,7 +407,7 @@ Be creative in extracting information based on context."""
         title = doc.add_heading('Daily Growth Report', 0)
 
         # Clean up markdown formatting
-        report_content = report_content.replace('**', '')
+        report_content = report_content.replace('', '')
 
         # Add report content, parsing the sections
         lines = report_content.split('\n')
@@ -751,18 +763,18 @@ class MonthlyReportGenerator:
         summary = f"""
         ### Monthly Progress Summary
 
-        **Total Observations:** {num_observations}
+        Total Observations: {num_observations}
 
-        **Goals Tracked:** {num_goals_with_progress}
+        Goals Tracked: {num_goals_with_progress}
 
-        **Average Goal Progress:** {avg_goal_score:.1f}/10
+        Average Goal Progress: {avg_goal_score:.1f}/10
         """
 
         if highest_goal:
             summary += f"""
-            **Strongest Goal Area:** {highest_goal['goal_text'][:50]}... (Score: {highest_goal['avg_score']:.1f}/10)
+            Strongest Goal Area: {highest_goal['goal_text'][:50]}... (Score: {highest_goal['avg_score']:.1f}/10)
 
-            **Goal Needing Most Support:** {lowest_goal['goal_text'][:50]}... (Score: {lowest_goal['avg_score']:.1f}/10)
+            Goal Needing Most Support: {lowest_goal['goal_text'][:50]}... (Score: {lowest_goal['avg_score']:.1f}/10)
             """
 
         return summary
@@ -1390,18 +1402,18 @@ def parent_dashboard(user_id):
             if reports:
                 for report in reports:
                     with st.expander(f"Report from {report.get('date', 'unknown date')}"):
-                        st.write(f"**Observer:** {report.get('observer_name', 'N/A')}")
-                        st.write(f"**Date:** {report.get('date', 'N/A')}")
+                        st.write(f"Observer: {report.get('observer_name', 'N/A')}")
+                        st.write(f"Date: {report.get('date', 'N/A')}")
 
                         if report.get('observations'):
-                            st.write("**Observations:**")
+                            st.write("Observations:")
                             st.write(report['observations'])
 
                         if report.get('strengths'):
                             try:
                                 strengths = json.loads(report['strengths']) if isinstance(report['strengths'], str) else \
                                     report['strengths']
-                                st.write("**Strengths:**")
+                                st.write("Strengths:")
                                 for strength in strengths:
                                     st.write(f"- {strength}")
                             except:
@@ -1411,7 +1423,7 @@ def parent_dashboard(user_id):
                             try:
                                 areas = json.loads(report['areas_of_development']) if isinstance(
                                     report['areas_of_development'], str) else report['areas_of_development']
-                                st.write("**Areas for Development:**")
+                                st.write("Areas for Development:")
                                 for area in areas:
                                     st.write(f"- {area}")
                             except:
@@ -1422,7 +1434,7 @@ def parent_dashboard(user_id):
                                 recs = json.loads(report['recommendations']) if isinstance(report['recommendations'],
                                                                                            str) else report[
                                     'recommendations']
-                                st.write("**Recommendations:**")
+                                st.write("Recommendations:")
                                 for rec in recs:
                                     st.write(f"- {rec}")
                             except:
@@ -1469,7 +1481,7 @@ def parent_dashboard(user_id):
         observer = observer_data[0]
 
         # Display messaging interface
-        st.write(f"**Messaging with:** {observer.get('name', 'Observer')}")
+        st.write(f"Messaging with: {observer.get('name', 'Observer')}")
 
         # Get existing messages
         messages = supabase.table('messages').select("*") \
@@ -1534,7 +1546,7 @@ def parent_dashboard(user_id):
                         alignments = supabase.table('goal_alignments').select("*").eq("goal_id",
                                                                                       goal['id']).execute().data
                         if alignments:
-                            st.write("**Report Alignments:**")
+                            st.write("Report Alignments:")
                             for alignment in alignments:
                                 report = supabase.table('observations').select("date").eq("id", alignment[
                                     'report_id']).execute().data
@@ -1565,7 +1577,7 @@ def parent_dashboard(user_id):
                                             st.rerun()
                                 else:
                                     fb = existing_feedback[0]
-                                    st.write(f"**Your Feedback:** {'⭐' * fb.get('rating', 0)}")
+                                    st.write(f"Your Feedback: {'⭐' * fb.get('rating', 0)}")
                                     st.write(fb.get('feedback_text', 'No feedback text'))
             else:
                 st.info("No goals set for your child yet")
@@ -2478,7 +2490,7 @@ def main():
                         alignments = supabase.table('goal_alignments').select("*").eq("goal_id",
                                                                                       goal['id']).execute().data
                         if alignments:
-                            st.write("**Alignment with Reports:**")
+                            st.write("Alignment with Reports:")
                             for alignment in alignments:
                                 report = supabase.table('observations').select("date").eq("id", alignment[
                                     'report_id']).execute().data
@@ -2534,7 +2546,7 @@ def main():
                     child_data = supabase.table('children').select("*").eq("id", child_id).execute().data
                     child_name = child_data[0].get('name', 'Child') if child_data else 'Child'
 
-                    st.write(f"**Messaging with parent of:** {child_name}")
+                    st.write(f"Messaging with parent of: {child_name}")
 
                     # Get existing messages
                     messages = supabase.table('messages').select("*") \
@@ -2601,9 +2613,9 @@ def main():
 
                     with st.expander(
                             f"Feedback for {child_name} - {calendar.month_name[report['month']]} {report['year']}"):
-                        st.write(f"**Rating:** {'⭐' * report.get('rating', 0)}")
-                        st.write(f"**Feedback:** {report['feedback']}")
-                        st.write(f"**Submitted on:** {report.get('feedback_submitted_at', 'Unknown date')}")
+                        st.write(f"Rating: {'⭐' * report.get('rating', 0)}")
+                        st.write(f"Feedback: {report['feedback']}")
+                        st.write(f"Submitted on: {report.get('feedback_submitted_at', 'Unknown date')}")
             else:
                 st.info("No feedback received yet")
         else:
