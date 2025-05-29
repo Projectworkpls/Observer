@@ -1917,6 +1917,13 @@ def observer_monthly_report_section(observer_id):
 
 # Main App
 def main():
+    # Initialize supabase client
+    supabase = init_supabase()
+    
+    if not supabase:
+        st.error("Failed to connect to database. Please check your configuration.")
+        return
+    
     extractor = ObservationExtractor()
 
     # Define AssemblyAI API key
