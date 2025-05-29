@@ -44,50 +44,22 @@ def init_supabase():
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise ValueError("Supabase URL or KEY not found in secrets")
 
+        logger.info(f"Connecting to Supabase at: {SUPABASE_URL}")
         client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-        # Test connection
+        # Test connection with a simple query
         try:
-            test = client.table('users').select("count", count="exact").execute()
+            test = client.table('users').select("count", count="exact").limit(1).execute()
             logger.info(f"Supabase connected successfully. Found {test.count} users.")
+            return client
         except Exception as test_error:
             logger.error(f"Supabase connection test failed: {str(test_error)}")
-            st.error("Failed to connect to database. Please check your connection settings.")
-            raise
-
-        return client
+            st.error(f"Failed to connect to database. Error: {str(test_error)}")
+            return None
 
     except Exception as e:
-        logger.error(f"Supabase initialization failed: {str(e)}")
-        st.error("Database initialization failed. Please check your configuration.")
-        raise
-
-
-supabase = init_supabase()
-
-
-def upload_file_to_storage(file_data, file_name, file_type):
-    """Upload a file to Supabase Storage and return the URL"""
-    try:
-        # Create a unique file name to avoid collisions
-        unique_filename = f"{uuid.uuid4()}_{file_name}"
-
-        # Determine the appropriate bucket based on file type
-        bucket_name = "audio-files" if "audio" in file_type else "image-files"
-
-        # Upload the file to Supabase Storage
-        response = supabase.storage.from_(bucket_name).upload(
-            unique_filename,
-            file_data,
-            file_options={"content-type": file_type}
-        )
-
-        # Get the public URL for the file
-        file_url = supabase.storage.from_(bucket_name).get_public_url(unique_filename)
-
-        return file_url
-    except Exception as e:
-        st.error(f"Error uploading file to storage: {str(e)}")
+        logger.error(f"Supabase initialization failed: {str(e)}", exc_info=True)
+        st.error(f"Database initialization failed: {str(e)}")
         return None
 
 
